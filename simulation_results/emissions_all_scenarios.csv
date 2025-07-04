@@ -1,0 +1,86 @@
+Archetype,Scenario,Operation,Solar,Emissions (kg CO2)
+Terraced,H+E+P,uni,best,670
+Terraced,H+E+P,uni,worst,680
+Terraced,H+E+P,bi,best,362
+Terraced,H+E+P,bi,worst,409
+Terraced,W,uni,best,797
+Terraced,W,uni,worst,797
+Terraced,W,bi,best,797
+Terraced,W,bi,worst,797
+Terraced,E,uni,best,864
+Terraced,E,uni,worst,864
+Terraced,E,bi,best,756
+Terraced,E,bi,worst,756
+Terraced,E+P,bi,best,571
+Terraced,E+P,bi,worst,587
+Terraced,E+P,uni,best,752
+Terraced,E+P,uni,worst,765
+Terraced,H+E,uni,best,779
+Terraced,H+E,uni,worst,779
+Terraced,H+E,bi,best,646
+Terraced,H+E,bi,worst,646
+Terraced,H+P = P,uni,best,1011
+Terraced,H+P = P,uni,worst,1021
+Terraced,H+P = P,bi,best,1011
+Terraced,H+P = P,bi,worst,1021
+Terraced,H+P+E+S,uni,best,473
+Terraced,H+P+E+S,uni,worst,506
+Terraced,H+P+E+S,bi,best,304
+Terraced,H+P+E+S,bi,worst,355
+Detached,H+E+P,uni,best,761
+Detached,H+E+P,uni,worst,773
+Detached,H+E+P,bi,best,433
+Detached,H+E+P,bi,worst,481
+Detached,W,uni,best,898
+Detached,W,uni,worst,898
+Detached,W,bi,best,898
+Detached,W,bi,worst,898
+Detached,E,uni,best,965
+Detached,E,uni,worst,965
+Detached,E,bi,best,835
+Detached,E,bi,worst,835
+Detached,E+P,bi,best,641
+Detached,E+P,bi,worst,661
+Detached,E+P,uni,best,843
+Detached,E+P,uni,worst,857
+Detached,H+E,uni,best,880
+Detached,H+E,uni,worst,880
+Detached,H+E,bi,best,727
+Detached,H+E,bi,worst,727
+Detached,H+P = P,uni,best,1102
+Detached,H+P = P,uni,worst,1113
+Detached,H+P = P,bi,best,1102
+Detached,H+P = P,bi,worst,1113
+Detached,H+P+E+S,uni,best,561
+Detached,H+P+E+S,uni,worst,595
+Detached,H+P+E+S,bi,best,370
+Detached,H+P+E+S,bi,worst,427
+S-Detached,H+E+P,uni,best,738
+S-Detached,H+E+P,uni,worst,750
+S-Detached,H+E+P,bi,best,412
+S-Detached,H+E+P,bi,worst,462
+S-Detached,W,uni,best,873
+S-Detached,W,uni,worst,873
+S-Detached,W,bi,best,873
+S-Detached,W,bi,worst,873
+S-Detached,E,uni,best,940
+S-Detached,E,uni,worst,940
+S-Detached,E,bi,best,815
+S-Detached,E,bi,worst,815
+S-Detached,E+P,bi,best,622
+S-Detached,E+P,bi,worst,640
+S-Detached,E+P,uni,best,821
+S-Detached,E+P,uni,worst,835
+S-Detached,H+E,uni,best,856
+S-Detached,H+E,uni,worst,856
+S-Detached,H+E,bi,best,710
+S-Detached,H+E,bi,worst,710
+S-Detached,H+P = P,uni,best,1079
+S-Detached,H+P = P,uni,worst,1091
+S-Detached,H+P = P,bi,best,1079
+S-Detached,H+P = P,bi,worst,1091
+S-Detached,H+P+E+S,uni,best,539
+S-Detached,H+P+E+S,uni,worst,574
+S-Detached,H+P+E+S,bi,best,352
+S-Detached,H+P+E+S,bi,worst,406
+

@@ -1,0 +1,16 @@
+Archetype,Operation,Solar,Emissions (kgCO2)
+Terraced,uni,best,670
+Terraced,uni,worst,680
+Terraced,bi,best,362
+Terraced,bi,worst,409
+Terraced,-,not-converted,797
+Semi-Detached,uni,best,738
+Semi-Detached,uni,worst,750
+Semi-Detached,bi,best,412
+Semi-Detached,bi,worst,462
+Semi-Detached,-,not-converted,873
+Detached,uni,best,761
+Detached,uni,worst,773
+Detached,bi,best,433
+Detached,bi,worst,481
+Detached,-,not-converted,898

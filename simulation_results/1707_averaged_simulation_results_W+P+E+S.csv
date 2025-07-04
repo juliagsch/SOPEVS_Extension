@@ -1,0 +1,13 @@
+Archetype,WFH Type,Operation,Solar,Grid Import,Total Load,Grid Cost,Grid Emissions,Indepence
+Detached,T2,hybrid_bidirectional,best,2283,6713,799,370,66
+Detached,T2,hybrid_bidirectional,worst,2634,6887,922,427,62
+Detached,T2,safe_unidirectional,best,3461,5434,1211,561,36
+Detached,T2,safe_unidirectional,worst,3673,5434,1286,595,33
+Semi_Detached,T2,hybrid_bidirectional,best,2173,6531,761,352,67
+Semi_Detached,T2,hybrid_bidirectional,worst,2506,6694,877,406,63
+Semi_Detached,T2,safe_unidirectional,best,3329,5283,1165,539,37
+Semi_Detached,T2,safe_unidirectional,worst,3540,5283,1239,574,33
+Terraced,T2,hybrid_bidirectional,best,1874,5919,656,304,68
+Terraced,T2,hybrid_bidirectional,worst,2190,6085,766,355,64
+Terraced,T2,safe_unidirectional,best,2921,4812,1022,473,39
+Terraced,T2,safe_unidirectional,worst,3122,4812,1093,506,35
