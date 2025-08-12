@@ -14,8 +14,9 @@ from pvlib.location import Location
 from pvlib.irradiance import get_total_irradiance
 import read_polyshape_3d
 from coplanarity_mesh import RoofSolarPanel
-from cartesian_lonlat import convert_coordinate_system, visualize_3d_mesh, convert_coordinate_system_building
+from cartesian_lonlat import convert_coordinate_system, visualize_3d_mesh, convert_coordinate_system_building, interleave_mesh, building_format
 import matplotlib.pyplot as plt
+import shutil
 
 def compute_centroid(triangle):
     """Calculate centroid with robust type checking"""
@@ -80,10 +81,16 @@ def calculate_tilt_azimuth(triangle):
     v2 = triangle[2] - triangle[0]
     normal = np.cross(v1, v2)
 
+    if normal[2] < 0:
+        normal = -normal
+
     # Normalize and calculate angles
     normal /= np.linalg.norm(normal)
     tilt = np.degrees(np.arccos(normal[2]))
-    azimuth = np.degrees(np.arctan2(normal[1], normal[0])) % 360
+    azimuth = (270-np.degrees(np.arctan2(normal[1], normal[0])))% 360
+
+    if np.isclose(tilt, 0.0):
+        azimuth = 0.0 
 
     return tilt, azimuth
 
@@ -248,16 +255,22 @@ def simulate_period_with_shading(centroid, tilt, azimuth, mesh_triangles, buildi
     solar_pos = site.get_solarposition(times)
     clearsky = site.get_clearsky(times, model='ineichen', linke_turbidity=3.0)
 
+
     # Precompute shading status for each time point
     shaded_mask = np.zeros(len(times), dtype=bool)
     for i, (ts, pos) in enumerate(solar_pos.iterrows()):
-        solar_azimuth = pos['azimuth']
-        solar_zenith = pos['apparent_zenith']
-        solar_dir = solar_vector(solar_azimuth, solar_zenith)
+        # Only run shading on Mondays (0) — skip others
+        if ts.dayofweek != 0:
+            shaded_mask[i] = shaded_mask[i-(24*ts.dayofweek)]
+        else:
+            solar_azimuth = pos['azimuth']
+            solar_zenith = pos['apparent_zenith']
+            solar_dir = solar_vector(solar_azimuth, solar_zenith)
 
-        # Check if the current triangle is shaded at this time
-        shaded_mask[i] = is_shaded(triangle_geometry, solar_dir, building_triangles, num_samples)
+            # Check if the current triangle is shaded at this time
+            shaded_mask[i] = is_shaded(triangle_geometry, solar_dir, building_triangles, num_samples)
 
+    # print(shaded_mask)
     # Calculate irradiance for all timesteps
     poa = get_total_irradiance(
         surface_tilt=tilt,
@@ -268,6 +281,8 @@ def simulate_period_with_shading(centroid, tilt, azimuth, mesh_triangles, buildi
         solar_zenith=solar_pos['apparent_zenith'],
         solar_azimuth=solar_pos['azimuth']
     )
+
+
 
     # Apply shading mask (set shaded timesteps to zero)
     total_flux = poa['poa_global'].clip(lower=0)
@@ -308,15 +323,15 @@ def create_comprehensive_results(averages, coordinate_map):
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
 def load_and_process_building(params):
     """Load and process building geometry data"""
-    vertices, faces = read_polyshape_3d.read_polyshape(params['input_file'])
+    vertices, faces, offset = read_polyshape_3d.read_polyshape(params['input_file'])
     roof = RoofSolarPanel(
         V=vertices,
         F=faces,
         **params['panel_config']
     )
-    #roof.display_building_and_rooftops()
-    #roof.plot_building_with_mesh_grid()
-    #roof.plot_rooftops_with_mesh_points()
+    roof.display_building_and_rooftops()
+    roof.plot_building_with_mesh_grid()
+    roof.plot_rooftops_with_mesh_points()
 
 
     ground_centroid = roof.get_ground_centroid()[:2]
@@ -334,7 +349,14 @@ def load_and_process_building(params):
     for face in roof.triangular_F:
         building_triangles.append([converted_building[i] for i in face])
 
-    return roof, converted_building, building_triangles
+    original_building_triangles = []
+    vertices, faces = read_polyshape_3d.read_surroundings(params['obstruction_file'], offset)
+    original_building = building_format(vertices)
+
+    for face in faces:
+        original_building_triangles.append([original_building[i] for i in face])
+
+    return roof, converted_building, building_triangles, original_building, original_building_triangles
 
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
 def process_solar_meshes(roof, params):
@@ -347,15 +369,25 @@ def process_solar_meshes(roof, params):
         *params['unit_scaling']
     )
 
-    # Extract and triangulate meshes
-    mesh_triangles = []
-    for mesh_idx, square in enumerate(extract_meshes(converted_mesh)):
-        tri1 = [square[0], square[1], square[2]]
-        tri2 = [square[0], square[2], square[3]]
-        mesh_triangles.append((tri1, mesh_idx))
-        mesh_triangles.append((tri2, mesh_idx))
+    original_mesh = interleave_mesh(roof.mesh_objects)
 
-    return converted_mesh, mesh_triangles
+    # Extract and triangulate meshes
+    converted_mesh_triangles = []
+    for mesh_idx, square in enumerate(extract_meshes(converted_mesh)):
+        tri1 = [square[0], square[2], square[1]]
+        tri2 = [square[0], square[3], square[2]]
+        converted_mesh_triangles.append((tri1, mesh_idx))
+        converted_mesh_triangles.append((tri2, mesh_idx))
+
+    
+    original_mesh_triangles = []
+    for mesh_idx, square in enumerate(extract_meshes(original_mesh)):
+        tri1 = [square[0], square[2], square[1]]
+        tri2 = [square[0], square[3], square[2]]
+        original_mesh_triangles.append((tri1, mesh_idx))
+        original_mesh_triangles.append((tri2, mesh_idx))
+
+    return converted_mesh, converted_mesh_triangles, original_mesh, original_mesh_triangles
 
 
 
@@ -373,19 +405,19 @@ def generate_sample_points(triangle, num_samples=11):
         samples.append(midpoint)
     return samples[:num_samples]
 
-def calculate_shading_status(mesh_triangles, building_triangles, solar_azimuth, solar_zenith, num_samples=1):
-    """Simplified shading calculation using enhanced is_shaded"""
-    solar_dir = solar_vector(solar_azimuth, solar_zenith)
-    shaded = []
-    unshaded = []
+# def calculate_shading_status(mesh_triangles, building_triangles, solar_azimuth, solar_zenith, num_samples=1):
+#     """Simplified shading calculation using enhanced is_shaded"""
+#     solar_dir = solar_vector(solar_azimuth, solar_zenith)
+#     shaded = []
+#     unshaded = []
 
-    for idx, (tri, mesh_idx) in enumerate(mesh_triangles):
-        if is_shaded(tri, solar_dir, building_triangles, num_samples):
-            shaded.append(tri)
-        else:
-            unshaded.append(tri)
+#     for idx, (tri, mesh_idx) in enumerate(mesh_triangles):
+#         if is_shaded(tri, solar_dir, building_triangles, num_samples):
+#             shaded.append(tri)
+#         else:
+#             unshaded.append(tri)
 
-    return shaded, unshaded
+#     return shaded, unshaded
 
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
 def process_results(raw_results, coordinate_map):
@@ -397,9 +429,14 @@ def process_results(raw_results, coordinate_map):
 def initialize_components(config):
     """Initialize and return building and solar mesh data"""
     # Process building geometry
-    roof, converted_building, building_triangles = load_and_process_building(config)
+    roof, converted_building, building_triangles, original_building, original_building_triangles = load_and_process_building(config)
     # Process solar panel meshes
-    converted_mesh, mesh_triangles = process_solar_meshes(roof, config)
+    converted_mesh, mesh_triangles, original_mesh, original_mesh_triangles = process_solar_meshes(roof, config)
+    # visualize_3d_mesh(converted_mesh, config)
+    # print(converted_mesh)
+    # print(converted_building)
+    # print(building_triangles)
+    # visualize_3d_mesh(converted_building, config)
 
     # Create coordinate map during initialization
     coordinate_map = create_mesh_coordinate_map(mesh_triangles)
@@ -408,12 +445,16 @@ def initialize_components(config):
         {
             'building_triangles': building_triangles,
             'roof': roof,
-            'converted_building': converted_building
+            'converted_building': converted_building,
+            'original_building': original_building,
+            'original_building_triangles': original_building_triangles,
         },
         {
             'mesh_triangles': mesh_triangles,
             'converted_mesh': converted_mesh,
-            'coordinate_map': coordinate_map
+            'coordinate_map': coordinate_map,
+            'original_mesh': original_mesh,
+            'original_mesh_triangles': original_mesh_triangles,
         }
     )
 
@@ -421,11 +462,13 @@ def initialize_components(config):
 def run_complete_simulation(building_data, solar_meshes, config):
     """Execute full solar potential simulation"""
     # Prepare simulation data
-    mesh_data = prepare_mesh_data(solar_meshes['mesh_triangles'])
+    mesh_data = prepare_mesh_data(solar_meshes['mesh_triangles'], solar_meshes['original_mesh_triangles'])
+    # mesh_data = prepare_mesh_data(building_data['roof'].mesh_objects)
 
     # Run simulation for each mesh element
     results = {}
     for idx, (centroid, orientation) in enumerate(zip(mesh_data['centroids'], mesh_data['orientations'])):
+        print(orientation)
         results[f"Mesh_{idx + 1}"] = execute_single_simulation(
             centroid=centroid,
             tilt=orientation[0],
@@ -439,10 +482,10 @@ def run_complete_simulation(building_data, solar_meshes, config):
     return results
 
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
-def prepare_mesh_data(mesh_triangles):
+def prepare_mesh_data(mesh_triangles, original_mesh_triangles):
     """Prepare mesh data for simulation"""
     return {
-        'orientations': [calculate_tilt_azimuth(tri) for tri, _ in mesh_triangles],
+        'orientations': [calculate_tilt_azimuth(tri) for tri, _ in original_mesh_triangles],
         'centroids': [compute_centroid(tri) for tri, _ in mesh_triangles]
         # Removed coordinate map creation from here
     }
@@ -454,8 +497,8 @@ def execute_single_simulation(centroid, tilt, azimuth, building_data, solar_mesh
         centroid=centroid,
         tilt=tilt,
         azimuth=azimuth,
-        mesh_triangles=[tri for tri, _ in solar_meshes['mesh_triangles']],
-        building_triangles=building_data['building_triangles'],
+        mesh_triangles=[tri for tri, _ in solar_meshes['original_mesh_triangles']],
+        building_triangles=building_data['original_building_triangles'],
         current_idx=mesh_idx,
         timezone_str=config['timezone'],
         start_time=config['simulation_params']['start'],
@@ -723,36 +766,47 @@ def save_comprehensive_results(results):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python solar_optimizer.py <output_dir>")
-        sys.exit(1)
-    output_dir = sys.argv[1]
+        # print("Usage: python solar_optimizer.py <output_dir>")
+        # sys.exit(1)
+        output_dir = "./out_noshading"
+    else:
+        output_dir = sys.argv[1]
+    
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+
+    # Recreate the directory
+    os.makedirs(output_dir)
+    filename = "2615202_1235060_2615220_1235078_"
 
     CONVERSION_PARAMS = {
-    'input_file': "/mnt/c/Users/Sharon/Desktop/SGA21_roofOptimization-main/SGA21_roofOptimization-main/RoofGraphDataset/res_building/BK39_500_014034_0007.polyshape",
+    'input_file': f"./roofs/{filename}.obj",
+    'obstruction_file': f"./surroundings/{filename}.obj",
     'earth_radius': 6378137.0,
-    #'geo_centroid': (52.1986125198786, 0.11358089726501427), #England
+    # 'geo_centroid': (52.1986125198786, 0.11358089726501427), #England
     #'geo_centroid': (-69.3872203183979, -67.70319583227294), #antarctic
     #'geo_centroid': (-42.2812963915156, 172.8486127892288), #New Zealand
     #'geo_centroid': (-33.36185896158091, 23.879985430205615), # South Africa
+    'geo_centroid': (47.2088, 7.5323), #Switzerland
 
     # for variation of latitude
-    #'geo_centroid': (0, 23.879985430205615), # 
+    # 'geo_centroid': (0, 23.879985430205615), # 
     #'geo_centroid': (20, 23.879985430205615), # 
-     'geo_centroid': (-40, 23.879985430205615), # 
+    # 'geo_centroid': (-40, 23.879985430205615), # 
     #'geo_centroid': (60, 23.879985430205615), # 
     #'geo_centroid': (70, 23.879985430205615), # 
     #'geo_centroid': (80, 23.879985430205615), # 
 
 
     'unit_scaling': (1.0, 1.0, 1.0),
-    'timezone': 'Etc/GMT+3',  #Greece 23.87
+    'timezone': 'Europe/Zurich', 
     'panel_config': {
         'panel_dx': 1.0,
         'panel_dy': 1.0,
         'max_panels': 10,
-        'b_scale_x': 0.05,
-        'b_scale_y': 0.05,
-        'b_scale_z': 0.05,
+        'b_scale_x': 1,
+        'b_scale_y': 1,
+        'b_scale_z': 1,
         'exclude_face_indices': [],   # 2 for test 2, 9 for test
         'grid_size': 1.0            #so now, when I do the simulation, it is 1m^2 for each mesh grid, if input is 1
                                     #the triangular meshgrid is triangulated, so it should be 1/2 3/4... averaged between the 2
@@ -768,7 +822,13 @@ def main():
         'edge_color': 'k',
         'alpha': 0.5,
         'labels': ('Longitude', 'Latitude', 'Elevation (m)')
-    }
+    },
+    'plot_style': {
+            'face_color': plt.cm.viridis(0.5),
+            'edge_color': 'k',
+            'alpha': 0.5,
+            'labels': ('Longitude', 'Latitude', 'Elevation (m)')
+        }
     }
 
     # Run a complete simulation

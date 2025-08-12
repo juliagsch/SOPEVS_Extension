@@ -6,6 +6,8 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from numpy import array
 import datetime
 import ast
+import read_polyshape_3d
+
 
 def pair_meshes_to_quads(meshes):
     """Pairs adjacent triangular meshes into quadrilaterals with proper vertex deduplication."""
@@ -246,7 +248,7 @@ def visualize_quads_and_panels(quads, panels_data, output_path):
         ax.add_collection3d(poly)
 
     # Plot panels
-    colors = ['red', 'blue', 'orange', 'green', 'purple']
+    colors = ['grey']
     for i, panel in enumerate(panels_data['panels']):
         for quad in panel['original_coordinates']:
             poly = Poly3DCollection([quad],
@@ -267,6 +269,9 @@ def visualize_quads_and_panels(quads, panels_data, output_path):
                                                                               # new complex building, 20, 90
 
     #plt.show()
+    read_polyshape_3d.set_axes_equal(ax)
+    plt.show()
+
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()  # Important to free memory
 
@@ -314,7 +319,7 @@ def read_and_remove_results():
         import json
         data = json.loads(content)
         
-        os.remove(filename)
+        # os.remove(filename)
         return data
     except Exception as e:
         print(f"Error reading results: {e}")
@@ -328,7 +333,7 @@ def main():
         print("Usage: solar_optimizer.py <num_panels> <panel_length> <panel_width> <output_path>")
         sys.exit(1)
     
-    image_save = "/mnt/c/Users/Sharon/Desktop/SOPEVS_Single_Roof-fix_sizing"
+    image_save = "."
     comprehensive_results = read_and_remove_results()
 
     optimization_result = run_optimization(

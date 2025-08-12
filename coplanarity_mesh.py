@@ -200,9 +200,7 @@ class RoofSolarPanel:
         Returns:
             Scaled vertex coordinates array (Nx3)
         """
-        #print(V)
         scaling_matrix = np.array([self.b_scale_x, self.b_scale_y, self.b_scale_z])
-        #print(V * scaling_matrix)
         return V * scaling_matrix
 
     def display_building_and_rooftops(self):
@@ -311,9 +309,10 @@ class RoofSolarPanel:
         normal = self.compute_normal(face_verts)
         if normal is None:
             return []
-
         face_z = [v[2] for v in face_verts]
-        min_z = min(face_z)
+        face_z.sort()
+        if len(face_z)<2:
+            return []
         edges = []
         n = len(face)
         for i in range(n):
@@ -323,7 +322,7 @@ class RoofSolarPanel:
             b = self.V[next_idx]
             edges.append((a, b))
 
-        candidate_edges = [(a, b) for a, b in edges if a[2] == min_z and b[2] == min_z]
+        candidate_edges = [(a, b) for a, b in edges if (a[2] == face_z[0] and b[2] == face_z[1]) or (a[2] == face_z[1] and b[2] == face_z[0])]
         if not candidate_edges:
             return []
 
@@ -353,39 +352,6 @@ class RoofSolarPanel:
         v_coords = [v for u, v in uv_coords]
         u_min, u_max = min(u_coords), max(u_coords)
         v_min, v_max = min(v_coords), max(v_coords)
-
-        """
-        squares = []
-        current_u = u_min
-        while current_u < u_max:
-            current_v = v_min
-            while current_v < v_max:
-                square_u_end = min(current_u + grid_size, u_max)
-                square_v_end = min(current_v + grid_size, v_max)
-                # Define square points: corners, edge midpoints, and center
-                corners = [
-                    (current_u, current_v),
-                    (square_u_end, current_v),
-                    (square_u_end, square_v_end),
-                    (current_u, square_v_end)
-                ]
-                mid_top = ((current_u + square_u_end) / 2, current_v)
-                mid_bottom = ((current_u + square_u_end) / 2, square_v_end)
-                mid_left = (current_u, (current_v + square_v_end) / 2)
-                mid_right = (square_u_end, (current_v + square_v_end) / 2)
-                center = ((current_u + square_u_end) / 2, (current_v + square_v_end) / 2)
-                check_points = corners + [mid_top, mid_bottom, mid_left, mid_right, center]
-
-                all_inside = True
-                for (u, v) in check_points:
-                    if not self.point_in_polygon(u, v, uv_coords):
-                        all_inside = False
-                        break
-                if all_inside:
-                    squares.append((current_u, current_v, square_u_end, square_v_end))
-                current_v += grid_size
-            current_u += grid_size
-        """
 
         squares = []
         current_u = u_min
@@ -493,6 +459,8 @@ class RoofSolarPanel:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
+        read_polyshape_3d.set_axes_equal(ax)
+
         ax.set_title("Rooftop with Mesh Points")
         plt.legend(loc='upper left', markerscale=2, fontsize=8)
         plt.show()
@@ -533,6 +501,8 @@ class RoofSolarPanel:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
+        read_polyshape_3d.set_axes_equal(ax)
+
         ax.set_title("Rooftop with Mesh Grid")
         plt.legend(loc='upper left', markerscale=2, fontsize=8)
         plt.show()
@@ -578,6 +548,7 @@ class RoofSolarPanel:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
+        read_polyshape_3d.set_axes_equal(ax)
 
         ax.view_init(elev=60, azim=-30)
         plt.title('Building Model with Mesh Grid')
@@ -607,7 +578,7 @@ class RoofSolarPanel:
 if __name__ == "__main__":
     # Load vertices and faces from a .polyshape file
     verts, faces = read_polyshape_3d.read_polyshape(
-        "C:/Users/Sharon/Desktop/SGA21_roofOptimization-main/SGA21_roofOptimization-main/RoofGraphDataset/res_building/test2.txt"
+        "./roofs/flat.obj"
     )
 
     roof = RoofSolarPanel(
@@ -616,11 +587,11 @@ if __name__ == "__main__":
         panel_dx=2.0,
         panel_dy=1.0,
         max_panels=10,
-        b_scale_x=0.05,
-        b_scale_y=0.05,
-        b_scale_z=0.05,
+        b_scale_x=1,
+        b_scale_y=1,
+        b_scale_z=1,
         grid_size= 1.0,
-        exclude_face_indices=[2]
+        # exclude_face_indices=[2]
     )
     #print(roof.V)
     #print(roof.F)

@@ -6,9 +6,9 @@
 #include <iostream>
 #include <climits>
 #include <string>
-#include <algorithm> 
+#include <algorithm>
 #include <set>
-#include <dirent.h> 
+#include <dirent.h>
 
 #include "common.h"
 
@@ -62,7 +62,7 @@ vector<double> load;
 vector<double> solar;
 std::string wfh_type;
 
-std::string output_dir;  
+std::string output_dir;
 
 vector<double> socValues;
 vector<ChargingEvent> chargingEvents;
@@ -76,21 +76,23 @@ vector<ChargingEvent> chargingEvents;
 #include <string>
 
 double panel_size;
-vector<vector<double>> solar_dataset; 
+vector<vector<double>> solar_dataset;
 
-int extract_number(const std::string& filename);
+int extract_number(const std::string &filename);
 
 // Helper function to extract numerical part from filenames
-int extract_number(const string& filename) {
+int extract_number(const string &filename)
+{
     size_t start = filename.find_first_of("0123456789");
-    if (start == string::npos) return -1;  // No numbers found
-    
+    if (start == string::npos)
+        return -1; // No numbers found
+
     size_t end = filename.find_first_not_of("0123456789", start);
-    if (end == string::npos) end = filename.length();
-    
+    if (end == string::npos)
+        end = filename.length();
+
     return stoi(filename.substr(start, end - start));
 };
-
 
 // vector<double> solar;
 
@@ -191,29 +193,26 @@ int process_input(char **argv, bool process_metric_input)
     double panel_width = stod(panel_width_string);
     string panel_length_string = argv[++i];
     double panel_length = stod(panel_length_string);
-    panel_size = panel_width * panel_length;  // Compute panel size
-
-
+    panel_size = panel_width * panel_length; // Compute panel size
 
     // here, we assume that the max solar radiance is 1000W/m^2
     // times the size of the panel, which is in m^2. such as 1m^2 or 1.6m^2. It is decided in the solar simulation step
     // the efficiency of system is 20%
     // divided by 1000, so the unit is kW
-    
 
-    //original
-    //string pv_max_string = argv[++i];
-    //pv_max = stod(pv_max_string);
+    // original
+    // string pv_max_string = argv[++i];
+    // pv_max = stod(pv_max_string);
 
     // set default pv_min and pv_step
     pv_min = 0;
-    //pv_step = (pv_max - pv_min) / num_pv_steps; // this is to assume that there are 350 panels on the rooftop. and for each rooftop it has 20/350 
-    pv_step = panel_size * 0.2;                                // pv_step = 0.2 number of panels(if we have the assumption about the area of the panels)
-                                                // now, I assume that the area of each panel is 1m^2. 
-                                                // because decrease the capacity of the solar system: 1m^2 * 1000W/m^2 * 20% / 1000W = 0.2kW
+    // pv_step = (pv_max - pv_min) / num_pv_steps; // this is to assume that there are 350 panels on the rooftop. and for each rooftop it has 20/350
+    pv_step = panel_size * 0.2; // pv_step = 0.2 number of panels(if we have the assumption about the area of the panels)
+                                // now, I assume that the area of each panel is 1m^2.
+                                // because decrease the capacity of the solar system: 1m^2 * 1000W/m^2 * 20% / 1000W = 0.2kW
 
-    //cout << "pvmax" << pv_max << endl;
-    
+    // cout << "pvmax" << pv_max << endl;
+
 #ifdef DEBUG
     cout << "pv_max_string = " << pv_max_string
          << ", pv_max = " << pv_max
@@ -312,11 +311,9 @@ int process_input(char **argv, bool process_metric_input)
         return 1;
     }
 
-
     // Process output directory right after load file
     string output_dir_string = argv[++i];
     output_dir = output_dir_string;
-    
 
     string max_soc_string = argv[++i];
     max_soc = stod(max_soc_string);
@@ -345,7 +342,7 @@ int process_input(char **argv, bool process_metric_input)
     cout << "charging_rate_string = " << charging_rate_string << ", charging_rate = " << charging_rate << endl;
 #endif
 
-    std::set<std::string> validOperationPolicyOptions = {"optimal_unidirectional", "safe_unidirectional", "hybrid_unidirectional", "optimal_bidirectional", "hybrid_bidirectional", "safe_bidirectional", "hybrid_bidirectional", "no_ev"};
+    std::set<std::string> validOperationPolicyOptions = {"safe_arrival", "safe_departure", "bidirectional", "arrival_limit", "no_ev"};
 
     std::string operationPolicyInput = argv[++i];
 
@@ -370,52 +367,56 @@ int process_input(char **argv, bool process_metric_input)
     return 0;
 }
 
-
-// 新增太阳能数据加载函数
-void load_solar_data(const string& output_dir) {
+void load_solar_data(const string &output_dir)
+{
     string solardir = output_dir;
 
     DIR *solar_dir = opendir(solardir.c_str());
-    if (!solar_dir) {
+    if (!solar_dir)
+    {
         cerr << "Error opening solar directory: " << solardir << endl;
         exit(1);
     }
-    
+
     vector<string> filenames;
     struct dirent *solar_ent;
-    
-    // 收集文件名并排序
-    while ((solar_ent = readdir(solar_dir)) != nullptr) {
+
+    // Collect and sort file names
+    while ((solar_ent = readdir(solar_dir)) != nullptr)
+    {
         string filename = solar_ent->d_name;
-        if (filename == "." || filename == ".." || filename[0] == '.') continue;
+        if (filename == "." || filename == ".." || filename[0] == '.')
+            continue;
         filenames.push_back(filename);
     }
     closedir(solar_dir);
-    
-    sort(filenames.begin(), filenames.end(), [](const string& a, const string& b) {
-        return extract_number(a) < extract_number(b);
-    });
-    
-    // 读取太阳能数据文件
-    for (const string& filename : filenames) {
+
+    sort(filenames.begin(), filenames.end(), [](const string &a, const string &b)
+         { return extract_number(a) < extract_number(b); });
+
+    // Read solar data files
+    for (const string &filename : filenames)
+    {
         string filepath = solardir + "/" + filename;
         ifstream filestream(filepath);
-        if (!filestream) {
+        if (!filestream)
+        {
             cerr << "Error opening solar file: " << filepath << endl;
             continue;
         }
-    
+
         vector<double> file_data = read_data_from_file(filestream);
-        if (file_data.empty() || file_data[0] < 0) {
+        if (file_data.empty() || file_data[0] < 0)
+        {
             cerr << "Error reading solar file: " << filepath << endl;
             continue;
         }
-    
+
         solar_dataset.push_back(file_data);
     }
-    
+
     // 计算 pv_max
-    pv_max = solar_dataset.size() * 1000 * panel_size * 0.2 / 1000;
+    pv_max = solar_dataset.size() * panel_size * 0.2;
     cout << "panel_size: " << panel_size << endl;
     cout << "Calculated pv_max: " << pv_max << endl;
 }

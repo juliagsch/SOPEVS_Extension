@@ -92,9 +92,58 @@ def convert_coordinate_system(CONVERSION_PARAMS, mesh_grid, centroid_x, centroid
 
     return process_structure(mesh_grid)
 
+def interleave_mesh(mesh_grid):
+    """
+    Convert nested mesh coordinates to geographic system with configurable scaling.
+
+    Args:
+        mesh_grid: Nested structure of [x, y, z] points
+    Returns:
+        Nested structure of [x, y, z] points
+    """
+
+    def convert_point(point):
+        raw_x, raw_y, raw_z = point
+
+        return [
+            raw_x,
+            raw_y,
+            raw_z 
+        ]
+
+    def process_structure(data):
+        if isinstance(data, list):
+            if len(data) == 3 and all(isinstance(i, (int, float)) for i in data):
+                return convert_point(data)
+
+            return [process_structure(item) for item in data]
+
+        return data
+
+    return process_structure(mesh_grid)
+
+
+def building_format(mesh_grid):
+    """
+    Convert flat list of [x, y, z] points to geographic coordinates.
+    Handles input format like [[x1,y1,z1], [x2,y2,z2], ...].
+    """
+
+    def convert_point(point):
+        raw_x, raw_y, raw_z = point
+
+        return [
+            raw_x,
+            raw_y,
+            raw_z 
+        ]
+
+    # Process all points in the flat list
+    return np.array([convert_point(point) for point in mesh_grid])
+
 
 def visualize_3d_mesh(nested_mesh, CONVERSION_PARAMS):
-    """3D visualization with configurable labels"""
+    """3D visualization with equal axis step size, but no box constraint"""
     style = CONVERSION_PARAMS['plot_style']
 
     fig = plt.figure(figsize=(10, 8))
@@ -105,6 +154,11 @@ def visualize_3d_mesh(nested_mesh, CONVERSION_PARAMS):
            zlabel=style['labels'][2],
            title='Converted 3D Mesh Visualization')
 
+    # Collect all vertex coordinates
+    all_points = np.array([point for mesh_object in nested_mesh for square in mesh_object for point in square])
+    x_vals, y_vals, z_vals = all_points[:, 0], all_points[:, 1], all_points[:, 2]
+
+    # Plot mesh
     for mesh_object in nested_mesh:
         for square in mesh_object:
             vertices = [[*point] for point in square]
@@ -116,15 +170,14 @@ def visualize_3d_mesh(nested_mesh, CONVERSION_PARAMS):
             )
             ax.add_collection3d(poly)
 
-    ax.autoscale_view()
-    ax.set_box_aspect([1, 1, 1])
     plt.show()
+
 
 if __name__ == "__main__":
     # Configuration
     # Scale factors assume decimeter
     CONVERSION_PARAMS = {
-        'input_file': "C:/Users/Sharon/Desktop/SGA21_roofOptimization-main/SGA21_roofOptimization-main/RoofGraphDataset/res_building/BJ39_500_100047_0010.polyshape",
+        'input_file': "./roofs/building.obj",
         'earth_radius': 6378137.0,  # WGS84 in meters
         'geo_centroid': (52.1986125198786, 0.11358089726501427),  # (lat, lon)
         'unit_scaling': (1.0, 1.0, 1.0),  # (x, y, z) scale factors
@@ -132,9 +185,9 @@ if __name__ == "__main__":
             'panel_dx': 2.0,
             'panel_dy': 1.0,
             'max_panels': 10,
-            'b_scale_x': 0.05,
-            'b_scale_y': 0.05,
-            'b_scale_z': 0.05,
+            'b_scale_x': 1,
+            'b_scale_y': 1,
+            'b_scale_z':1,
             'grid_size': 1.0
         },
         'plot_style': {

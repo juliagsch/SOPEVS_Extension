@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import re
 from mpl_toolkits.mplot3d import Axes3D
+import trimesh
 
 
 # Converted vertices array (22x3)
@@ -63,28 +64,86 @@ import numpy as np
 import re
 
 
-def read_polyshape(filename):
+
+def set_axes_equal(ax):
+    '''Make axes of 3D plot have equal scale.'''
+    x_limits = ax.get_xlim3d()
+    y_limits = ax.get_ylim3d()
+    z_limits = ax.get_zlim3d()
+
+    x_range = abs(x_limits[1] - x_limits[0])
+    y_range = abs(y_limits[1] - y_limits[0])
+    z_range = abs(z_limits[1] - z_limits[0])
+
+    max_range = max(x_range, y_range, z_range)
+
+    # Calculate midpoints
+    x_middle = np.mean(x_limits)
+    y_middle = np.mean(y_limits)
+    z_middle = np.mean(z_limits)
+
+    # Set new limits with the same range
+    ax.set_xlim3d(x_middle - max_range / 2, x_middle + max_range / 2)
+    ax.set_ylim3d(y_middle - max_range / 2, y_middle + max_range / 2)
+    ax.set_zlim3d(z_middle - max_range / 2, z_middle + max_range / 2)
+
+
+def read_polyshape(filename, offset=[0,0,0]):
     with open(filename, 'r') as f:
         lines = [line.strip() for line in f if line.strip()]
+    faces, verts = [], []
+    
+    if '.obj' in filename:
+        for line in lines:
+            parts = line.split(' ')
+            if parts[0] == 'v':
+                verts.append([float(parts[1]), float(parts[2]),float(parts[3])])
+            elif parts[0] == 'f':
+                face = []
+                for v in parts[1:]:
+                    face.append(int(v)-1)
+                faces.append(face)
+        # building = trimesh.load(filename)
+        # return np.array(building.vertices), building.faces.tolist()
+        verts = np.array(verts)
+        print(verts[:,0])
+        min_x = min(verts[:,0])
+        min_y = min(verts[:,1])
+        min_z = min(verts[:,2])
+        print(min_x, min_y, min_z)
 
-    # Parse header information
-    num_verts = int(re.search(r'(\d+)', lines[0]).group())
-    num_faces = int(re.search(r'(\d+)', lines[1]).group())
+        for i in range(len(verts)):
+            verts[i,:] = verts[i,0]-min_x, verts[i,1]-min_y, verts[i,2]-min_z
+        offset = [min_x, min_y, min_z]
+    else:
 
-    # Read vertices (next num_verts lines after header)
-    verts = []
-    for line in lines[2:2 + num_verts]:
-        x, y, z = map(float, line.split(','))
-        verts.append([x, y, z])
+        # Parse header information
+        num_verts = int(re.search(r'(\d+)', lines[0]).group())
+        num_faces = int(re.search(r'(\d+)', lines[1]).group())
 
-    # Read faces (remaining lines)
-    faces = []
-    for line in lines[2 + num_verts:2 + num_verts + num_faces]:
-        parts = list(map(int, line.split(',')))
-        face = [p - 1 for p in parts[:-1]]  # Convert to 0-based index
-        faces.append(face)
+        # Read vertices (next num_verts lines after header)
+        for line in lines[2:2 + num_verts]:
+            x, y, z = map(float, line.split(','))
+            verts.append([x, y, z])
 
-    return np.array(verts), faces
+        # Read faces (remaining lines)
+        for line in lines[2 + num_verts:2 + num_verts + num_faces]:
+            parts = list(map(int, line.split(',')))
+            face = [p - 1 for p in parts[:-1]]
+            faces.append(face)
+        verts = np.array(verts)
+        offset = [0,0,0]
+    
+    return verts, faces, offset
+
+def read_surroundings(filename, offset):
+    mesh = trimesh.load(filename)
+    verts = np.array(mesh.vertices)
+    faces = mesh.faces
+
+    for i in range(len(verts)):
+        verts[i,:] = verts[i,0]-offset[0], verts[i,1]-offset[1], verts[i,2]-offset[2]
+    return verts, faces
 
 # Calculate planarity error
 def err_planarity(X, F):
@@ -128,6 +187,7 @@ def plot_building(verts, faces):
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
+    set_axes_equal(ax)
 
     ax.view_init(elev=60, azim=-30)
     err  = err_planarity(verts, faces)
@@ -142,21 +202,19 @@ def identify_rooftops(verts, faces):
     """
     # Find ground vertices (Z=0)
     # With a precision tolerance, to deal with coplanarity
-    ground_mask = np.isclose(verts[:, 2], 0, atol=1e-15)
-    ground_indices = set(np.where(ground_mask)[0])
+    # ground_mask = np.isclose(verts[:, 2], 0, atol=1e-15)
+    # ground_indices = set(np.where(ground_mask)[0])
 
     # Collect faces with no ground vertices
-    roof_faces = []
-    for face in faces:
-        if not any(idx in ground_indices for idx in face):
-            roof_faces.append(face)
+    # roof_faces = []
+    # for face in faces:
+    #     roof_faces.append(face)
 
 
     # First pass: exclude faces with any ground vertices
     roof_candidates = []
     for face in faces:
-        if not any(idx in ground_indices for idx in face):
-            roof_candidates.append(face)
+        roof_candidates.append(face)
 
     # Second pass: filter horizontal faces
     roof_faces = []
@@ -187,11 +245,12 @@ def plot_rooftops(verts, roof_faces):
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
+    set_axes_equal(ax)
     plt.show()
 
 # Usage
 if __name__ == "__main__":
-    verts, faces = read_polyshape("C:/Users/Sharon/Desktop/SGA21_roofOptimization-main/SGA21_roofOptimization-main/RoofGraphDataset/res_building/test.txt")
+    verts, faces = read_polyshape("./roofs/flat.obj")
 
     # Result verification
     print("Vertices shape:", verts.shape)

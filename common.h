@@ -17,15 +17,15 @@ extern int metric;
 extern int days_in_chunk;
 
 extern vector<double> load;
-extern void load_solar_data(const std::string& output_dir);
-extern std::string output_dir;  // 确保 output_dir 已声明
+extern void load_solar_data(const std::string &output_dir);
+extern std::string output_dir; // 确保 output_dir 已声明
 // extern vector<double> solar;
 
 extern vector<vector<double>> solar_dataset;
 extern std::string output_dir;
-//extern std::string solardir_global;
-//extern double panel_length_global;
-//extern double panel_width_global;
+// extern std::string solardir_global;
+// extern double panel_length_global;
+// extern double panel_width_global;
 
 // define the upper and lower values to test for battery cells and pv,
 // as well as the step size of the search
@@ -55,8 +55,8 @@ int static number_of_chunks = 100;
 
 double static T_u = 1.0; // this is the time unit, representing the number of hours in each time slot of the load and solar traces. If changed, the simulation code will likely break.
 double static kWh_in_one_cell = 0.011284;
-double static num_cells_steps = 400; // search in total of n steps for cells
-double static num_pv_steps = 350;	 // search in total of n steps for pv
+double static num_cells_steps = 1000; // search in total of n steps for cells
+double static num_pv_steps = 350;	  // search in total of n steps for pv
 extern double panel_size;
 extern double panel_width;
 extern double panel_length;
@@ -92,6 +92,14 @@ struct SimulationResult
 	double cost;
 
 	SimulationResult(double B_val, double C_val, double cost_val) : B(B_val), C(C_val), cost(cost_val) {}
+};
+
+struct OperationResult
+{
+	double ev_b;
+	double b;
+	double ev_charged;
+	OperationResult(double ev_b_val, double b_val, double ev_charged_val) : ev_b(ev_b_val), b(b_val), ev_charged(ev_charged_val) {}
 };
 
 vector<double> read_data_from_file(string);
