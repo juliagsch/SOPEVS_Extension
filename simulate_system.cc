@@ -6,10 +6,11 @@
 #include <algorithm>
 #include "simulate_system.h"
 #include "ev.h"
-#include "common.h"
+#include "params.h"
 #include <cstdlib>
 
 using namespace std;
+
 int loss_events = 0;
 double load_deficit = 0;
 
@@ -343,7 +344,7 @@ double get_ev_b(std::vector<EVStatus> &dailyStatuses, int hour, double last_soc)
 }
 
 // call it with a specific battery and PV size and want to compute the loss
-double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, int start_index, int end_index, double cells, double b_0, std::vector<EVRecord> evRecords, std::vector<std::vector<EVStatus>> allDailyStatuses, double max_soc, double min_soc, int Ev_start, bool printGridCost)
+double sim(vector<double> &load_trace, vector<double> &solar_trace, int start_index, int end_index, double cells, double pv, double b_0, std::vector<EVRecord> evRecords, std::vector<std::vector<EVStatus>> allDailyStatuses, double max_soc, double min_soc, int Ev_start, bool writeLoad)
 {
 	update_parameters(cells);
 	loss_events = 0;
@@ -361,30 +362,8 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 	double c = 0.0; // Remaining solar energy after covering household and EV charging load
 	double d = 0.0; // Missing energy to cover household and EV charging load after using produced solar energy.
 	// We assume that the initial battery charge of the EV comes from the grid.
-
-	// Compute aggregated solar trace
-	vector<double> solar_trace;
-
-	int trace_length_solar = 0;
-	if (!solar_trace_in.empty())
-	{
-		int cols = solar_trace_in[0].size();
-		solar_trace.resize(cols, 0.0);
-		for (const auto &trace : solar_trace_in)
-		{
-			for (int i = 0; i < cols; ++i)
-			{
-				solar_trace[i] += trace[i];
-			}
-		}
-		trace_length_solar = solar_trace.size();
-	}
-	else
-	{
-		// cerr << "Error: solar_trace_in is empty." << endl;
-		return 1;
-	}
-
+	// double sum = accumulate(solar_trace.begin(), solar_trace.end(), 0.0);
+	// cout << sum << endl;
 	if (Operation_policy != "no_ev")
 	{
 		initial_battery_level_ev = fmin(32.0, ev_battery_capacity * max_soc); // EV battery level at the start of the simulation
@@ -400,7 +379,7 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 	int index_t_solar; // Current index in solar trace
 	int index_t_load;  // Current index in load trace
 
-	// int trace_length_solar = solar_trace.size();
+	int trace_length_solar = solar_trace.size();
 	int trace_length_load = load_trace.size();
 
 	for (int day = 0; day < (end_index - start_index) / 24; day++)
@@ -422,8 +401,8 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 				double hourly_load = load_trace[index_t_load];
 				total_load += hourly_load;
 
-				c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-				d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+				c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+				d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 				operationResult = no_ev(b, c, d, hour);
 			}
@@ -448,8 +427,8 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 					double hourly_load = load_trace[index_t_load] + maxCharging;
 					total_load += hourly_load;
 
-					c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-					d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+					c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+					d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 					operationResult = hybrid_unidirectional(b, ev_b, c, d, isCharging, maxCharging, isHome, hour);
 				}
@@ -465,17 +444,17 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 					double hourly_load = load_trace[index_t_load] + maxCharging;
 					total_load += hourly_load;
 
-					c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-					d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+					c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+					d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 					operationResult = hybrid_unidirectional(b, ev_b, c, d, isCharging, maxCharging, isHome, hour);
 				}
 				else if (Operation_policy == "arrival_limit")
 				{
 					// Check if EV should currently be charging
-					if (isHome && ev_b < ev_b * 0.2)
+					if (isHome && ev_b < min_battery_charge)
 					{
-						maxCharging = fmin((ev_b * 0.2 - ev_b) / (eta_c_ev * T_u), get_maxCharging(ev_b));
+						maxCharging = fmin((min_battery_charge - ev_b) / (eta_c_ev * T_u), get_maxCharging(ev_b));
 					}
 					if (maxCharging > 0)
 					{
@@ -485,8 +464,8 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 					double hourly_load = load_trace[index_t_load] + maxCharging;
 					total_load += hourly_load;
 
-					c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-					d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+					c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+					d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 					operationResult = hybrid_unidirectional(b, ev_b, c, d, isCharging, maxCharging, isHome, hour);
 				}
@@ -502,15 +481,15 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 					double hourly_load = load_trace[index_t_load] + maxCharging;
 					total_load += hourly_load;
 
-					c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-					d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+					c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+					d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 					operationResult = hybrid_bidirectional(b, ev_b, c, d, isCharging, maxCharging, isHome, hour);
 				}
 				else if (Operation_policy == "lbn_limit")
 				{
 					// Check if EV should currently be charging
-					if (isHome && hour <= 4 && ev_b < ev_b * 0.2)
+					if (isHome && hour <= 4 && ev_b < min_battery_charge)
 					{
 						maxCharging = get_maxCharging(ev_b);
 					}
@@ -518,8 +497,8 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 					double hourly_load = load_trace[index_t_load] + maxCharging;
 					total_load += hourly_load;
 
-					c = solar_trace[index_t_solar] - hourly_load; // Remaining solar power after covering load
-					d = hourly_load - solar_trace[index_t_solar]; // Missing power to cover load
+					c = solar_trace[index_t_solar] * pv - hourly_load; // Remaining solar power after covering load
+					d = hourly_load - solar_trace[index_t_solar] * pv; // Missing power to cover load
 
 					operationResult = hybrid_unidirectional(b, ev_b, c, d, isCharging, maxCharging, isHome, hour);
 				}
@@ -550,7 +529,10 @@ double sim(vector<double> &load_trace, vector<vector<double>> &solar_trace_in, i
 	}
 }
 
-vector<SimulationResult> simulate(vector<double> &load_trace, vector<vector<double>> &solar_trace, int start_index, int end_index, double b_0, std::vector<EVRecord> evRecords, std::vector<std::vector<EVStatus>> allDailyStatuses, double max_soc, double min_soc, int Ev_start)
+// Run simulation for provides solar and load trace to find cheapest combination of
+// load and solar that can meet the epsilon target
+vector<SimulationResult> simulate(vector<double> &load_trace, vector<vector<double>> &solar_dataset,
+								  int start_index, int end_index, double b_0, std::vector<EVRecord> evRecords, std::vector<std::vector<EVStatus>> allDailyStatuses, double max_soc, double min_soc, int Ev_start)
 {
 	// Precompute annual sums for each solar trace and sort them
 	vector<double> annual_sums;
@@ -563,56 +545,39 @@ vector<SimulationResult> simulate(vector<double> &load_trace, vector<vector<doub
 	vector<size_t> sorted_indices(solar_dataset.size());
 	iota(sorted_indices.begin(), sorted_indices.end(), 0);
 	sort(sorted_indices.begin(), sorted_indices.end(), [&annual_sums](size_t a, size_t b)
-		 { return annual_sums[a] > annual_sums[b]; });
+		 { return annual_sums[a] < annual_sums[b]; });
+	int max_panels = solar_dataset.size();
+	int trace_length = solar_dataset[0].size();
+	vector<vector<double>> averaged_solar_traces;
 
-	// Precompute aggregated solar for all possible PV sizes (number of panels)
-	int max_pv = solar_dataset.size();
-	int trace_length = solar_dataset.empty() ? 0 : solar_dataset[0].size();
-	double min_cost = 1000000000;
-	double battery = 0;
-	double pv_size = 0;
-	// vector<vector<double>> aggregated_solar_all(max_pv + 1, vector<double>(trace_length, 0.0));
-	// std::cout << "sorted_indices" << std::endl;
-	// for (int i = 0; i < sorted_indices.size(); i++)
-	// {
-	// 	std::cout << sorted_indices[i] << std::endl;
-	// 	std::cout << annual_sums[i] << std::endl;
-	// }
-
-	// for (int k = 1; k <= max_pv; ++k)
-	// {
-	// 	for (int hour = 0; hour < trace_length; ++hour)
-	// 	{
-	// 		double sum = 0.0;
-	// 		// Use the k most productive panels (last k indices in sorted_indices)
-	// 		for (int i = 0; i < k; ++i)
-	// 		{
-	// 			int idx = sorted_indices[max_pv - k + i];
-	// 			sum += solar_dataset[idx][hour];
-	// 		}
-	// 		aggregated_solar_all[k][hour] = sum; // * 4 Preserve original scaling?
-	// 	}
-	// }
-
-	// for (size_t idx : sorted_indices) {
-	//	std::cout << idx << " ";
-	// }
-	//  std::cout << std::endl;
+	for (int i = 0; i < max_panels; i++)
+	{
+		double div = max_panels - i;
+		vector<double> avg_solar_trace;
+		avg_solar_trace.resize(trace_length, 0.0);
+		for (int j = i; j < max_panels; j++)
+		{
+			int idx = sorted_indices[j];
+			for (int n = 0; n < trace_length; n++)
+			{
+				avg_solar_trace[n] += solar_dataset[idx][n] / div / system_size_trace_pv;
+			}
+		}
+		averaged_solar_traces.push_back(avg_solar_trace);
+	}
+	std::reverse(averaged_solar_traces.begin(), averaged_solar_traces.end());
 
 	// first, find the lowest value of cells that will get us epsilon loss when the PV is maximized
 	// use binary search
 	double cells_U = cells_max;
 	double cells_L = cells_min;
-	double mid_cells = 0.0;
-	double loss = 0.0;
 
-	// binary search to find min. battery size that works for pvmax
 	while (cells_U - cells_L > cells_step)
 	{
+		double mid_cells = (cells_L + cells_U) / 2.0;
+		double loss = sim(load_trace, averaged_solar_traces[0], start_index, end_index, mid_cells, pv_max, b_0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start, false);
 
-		mid_cells = (cells_L + cells_U) / 2.0;
-		// simulate with PV max first
-		loss = sim(load_trace, solar_trace, start_index, end_index, mid_cells, b_0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start, false);
+		// cout << "sim result with " << a2_intercept << " kWh and " << pv_max << " pv: " << loss << endl;
 		if (loss > epsilon)
 		{
 			cells_L = mid_cells;
@@ -623,103 +588,82 @@ vector<SimulationResult> simulate(vector<double> &load_trace, vector<vector<doub
 			cells_U = mid_cells;
 		}
 	}
-
-	// set the starting number of battery cells to the min. battery needed for pvmax
+	// set the starting number of battery cells to be the upper limit that was converged on
 	double starting_cells = cells_U;
 	double starting_cost = B_inv * starting_cells + PV_inv * pv_max;
-	double lowest_feasible_pv = solar_trace.size();
-
-	// double lowest_cost = starting_cost;
-	// double lowest_B = starting_cells * kWh_in_one_cell;
-	// double lowest_C = pv_max;
+	double lowest_feasible_pv = pv_max;
 
 	vector<SimulationResult> curve;
-	// first point on the curve
-	curve.push_back(SimulationResult(starting_cells * kWh_in_one_cell, lowest_feasible_pv * pv_step, starting_cost));
-
-	vector<vector<double>> optimal_solar_indices; // To store the final trace indices
-
-	// std::cout << "First SimulationResult:" << std::endl;
-	// std::cout << "  Battery (kWh): " << curve[0].B << std::endl;
-	// std::cout << "  PV size: " << curve[0].C << std::endl;
-	// std::cout << "  Cost: $" << curve[0].cost << std::endl;
-	// cout << " steps " << cells_step << " " << pv_step << endl;
-
+	curve.emplace_back(starting_cells * kWh_in_one_cell, lowest_feasible_pv, starting_cost);
 	for (double cells = starting_cells; cells <= cells_max; cells += cells_step)
 	{
-
 		// for each value of cells, find the lowest pv that meets the epsilon loss constraint
-		double loss = 0;
+		bool binary_search = true;
 
-		// vector<vector<double>> solar_subset;
-
-		while (true) // current_pv_number > 0
+		if (curve.size() >= 2)
 		{
-			// cout << lowest_feasible_pv;
-			//  Least productive PVs are at the beginning (lower indices), and the most productive are at the end
+			double lastC1 = curve.end()[-1].C;
+			double lastC2 = curve.end()[-2].C;
 
-			vector<vector<double>> solar_subset;
-			// cout << cells * kWh_in_one_cell << " ";
-			for (int i = 0; i < lowest_feasible_pv - 1; ++i)
+			if (lastC1 - lastC2 < 10 * pv_step)
 			{
-				int idx = sorted_indices[i];
-				// cout << idx << " ";
-				solar_subset.push_back(solar_trace[idx]);
-			}
-			// cout << solar_subset.size() << " ";
-			// reduce pv size and find by how much you need to increase battery
-			loss = sim(load_trace, solar_subset, start_index, end_index, cells, b_0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start, false);
-			// cout << "loss " << loss << " ";
-
-			if (loss < epsilon)
-			{
-				lowest_feasible_pv--;
-				// cout << " success " << lowest_feasible_pv << endl;
-			}
-			else
-			{
-				// cout << "break " << endl;
-				break;
-			}
-
-			// this only happens if the trace is very short, since the battery starts half full
-			// and can prevent loss without pv for a short time
-			if (lowest_feasible_pv <= 0)
-			{
-				// cout << "lowest possible pv set to zero " << endl;
-				lowest_feasible_pv = 0;
-				break;
+				// use linear search if last two pv values are close
+				binary_search = false;
 			}
 		}
 
-		/*
-		cout << "PV Size: " << current_pv_number << ", Using traces: ";
-		for (int i = 0; i < current_pv_number; ++i) {
-			int idx = sorted_indices[sorted_indices.size() - current_pv_number + i];
-			cout << idx << " ";
+		if (binary_search)
+		{
+			double pv_U = lowest_feasible_pv;
+			double pv_L = 0;
+
+			while (pv_U - pv_L > pv_step)
+			{
+				double mid_pv = (pv_L + pv_U) / 2.0;
+				double loss = sim(load_trace, averaged_solar_traces[ceil(mid_pv / panelkW) - 1], start_index, end_index, cells, mid_pv, b_0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start, false);
+
+				if (loss > epsilon)
+				{
+					pv_L = mid_pv;
+				}
+				else
+				{
+					// (loss <= epsilon)
+					pv_U = mid_pv;
+				}
+			}
+
+			lowest_feasible_pv = pv_U;
 		}
-		cout << endl;  */
+		else
+		{
+			while (true)
+			{
+				double loss = sim(load_trace, averaged_solar_traces[ceil((lowest_feasible_pv - pv_step) / panelkW) - 1], start_index, end_index, cells, lowest_feasible_pv - pv_step,
+								  b_0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start, false);
 
-		double cost = B_inv * cells + PV_inv * lowest_feasible_pv * pv_step;
-		// if (cost < min_cost)
-		// {
-		// 	min_cost = cost;
-		// 	battery = cells * kWh_in_one_cell;
-		// 	pv_size = lowest_feasible_pv * pv_step;
-		// }
-		// push all pv battery combinations that work
-		// cout << "result " << cells * kWh_in_one_cell << " " << lowest_feasible_pv * pv_step << " " << cost << endl;
-		curve.push_back(SimulationResult(cells * kWh_in_one_cell, lowest_feasible_pv * pv_step, cost));
+				if (loss < epsilon)
+				{
+					lowest_feasible_pv -= pv_step;
+				}
+				else
+				{
+					break;
+				}
 
-		// if (cost < lowest_cost)
-		// {
-		// 	lowest_cost = cost;
-		// 	lowest_B = cells * kWh_in_one_cell;
-		// 	lowest_C = lowest_feasible_pv;
-		// 	// optimal_solar_indices = solar_subset;
-		// }
+				// this only happens if the trace is very short, since the battery starts half full
+				// and can prevent loss without pv for a short time
+				if (lowest_feasible_pv <= 0)
+				{
+					lowest_feasible_pv = 0;
+					break;
+				}
+			}
+		}
+
+		double cost = B_inv * cells + PV_inv * lowest_feasible_pv;
+		curve.emplace_back(cells * kWh_in_one_cell, lowest_feasible_pv, cost);
 	}
-	// cout << optimal_solar_indices.size() << endl;
-	// cout << min_cost << " " << start_index << " " << end_index << " " << battery << " " << pv_size << endl;
+
 	return curve;
 }

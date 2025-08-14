@@ -3,7 +3,7 @@
 #define SIMULATE_SYSTEM_H
 
 #include <vector>
-#include "common.h"
+#include "params.h"
 #include "ev.h"
 
 using namespace std;

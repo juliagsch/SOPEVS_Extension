@@ -1,42 +1,40 @@
-#include <fstream>
-#include <sstream>
 #include <cstring>
 #include <cstdlib>
 #include <vector>
-#include <iostream>
 #include <climits>
+#include <iostream>
 #include <string>
-#include <algorithm>
+#include <regex>
 #include <set>
+#include <vector>
 #include <dirent.h>
+#include <algorithm>
 
-#include "common.h"
+#include "params.h"
 
-double B_inv;  // cost per cell
 double PV_inv; // cost per unit (kW) of PV
 
-double cells_min;
-double cells_max;
-double cells_step; // search in step of x cells
 double pv_min;
 double pv_max;
 double pv_step; // search in steps of x kW
-double battery_result;
-double pv_result;
-int loadNumber;
-
+double panelkW = 0.2;
+double system_size_trace_pv = 0.2;
 double max_soc;
 double min_soc;
-
 double ev_battery_capacity = 40.0;
-int t_ch = 3;
 double charging_rate = 7.4;
 double discharging_rate = 7.4;
+double min_battery_charge = 0;
+double pv_result = 0;
+double battery_result = 0;
 
-int ev_charged = 0;
-int ev_discharged = 0;
-int stat_charged = 0;
-int stat_discharged = 0;
+vector<double> solar;
+vector<double> load;
+
+std::string wfh_type;
+
+vector<double> socValues;
+// vector<ChargingEvent> chargingEvents;
 
 double grid_import = 0.0;
 double total_load = 0.0;
@@ -48,37 +46,30 @@ double power_lost = 0;         // Electricity lost due to charging and dischargi
 double max_charging_total = 0; // Total electricity used to charge the EV
 double ev_battery_diff = 0;    // EV battery difference between beginning and start of the simulation
 
-// common.cc
 std::string EV_charging = "naive";               // Default policy
 std::string Operation_policy = "unidirectional"; // Default policy
 std::string path_to_ev_data;
 
+double B_inv; // cost per cell
 double epsilon;
 double confidence;
 int metric;
-int days_in_chunk;
 
-vector<double> load;
-vector<double> solar;
-std::string wfh_type;
+size_t days_in_chunk;
+size_t chunk_size;
+size_t chunk_step;
+size_t chunk_total;
 
-std::string output_dir;
+// define the upper and lower values to test for battery cells and pv,
+// as well as the step size of the search
+double cells_min;
+double cells_max;
+double cells_step; // search in step of x cells
 
-vector<double> socValues;
-vector<ChargingEvent> chargingEvents;
+size_t number_of_chunks;
 
-#include <iostream>
-#include <string>
-#include <cstdlib> // For std::stoi
-
-#include <iostream>
-#include <regex>
-#include <string>
-
-double panel_size;
 vector<vector<double>> solar_dataset;
-
-int extract_number(const std::string &filename);
+std::string output_dir;
 
 // Helper function to extract numerical part from filenames
 int extract_number(const string &filename)
@@ -94,53 +85,7 @@ int extract_number(const string &filename)
     return stoi(filename.substr(start, end - start));
 };
 
-// vector<double> solar;
-
-std::string extract_wfh_type(const std::string &ev_filename)
-{
-    std::regex pattern("ev_data/ev_merged_T(\\d+)\\.csv");
-    std::smatch match;
-
-    if (std::regex_search(ev_filename, match, pattern) && match.size() > 1)
-    {
-        return match.str(1); // The captured group
-    }
-    else
-    {
-        return ""; // No match found
-    }
-}
-
-/*int extractLoadNumber(const std::string &filename)
-{
-    // Find the position of "load_"
-    size_t loadPos = filename.find("load_");
-    if (loadPos == std::string::npos)
-    {
-        std::cerr << "Error: 'load_' not found in filename." << std::endl;
-        return -1; // Error indicator
-    }
-
-    // Extract the substring starting from "load_" to the end of the filename
-    std::string numberStr = filename.substr(loadPos + 5); // 5 is the length of "load_"
-
-    // Remove ".txt" from the end of the number string
-    size_t txtPos = numberStr.find(".txt");
-    if (txtPos != std::string::npos)
-    {
-        numberStr = numberStr.substr(0, txtPos);
-    }
-
-    // Convert the number string to an integer
-    int loadNumber = std::stoi(numberStr);
-
-    return loadNumber;
-}
-
-
-*/
-
-vector<double> read_data_from_file(istream &datafile, int limit = INT_MAX)
+vector<double> read_data_from_file(istream &datafile, int limit)
 {
 
     vector<double> data;
@@ -166,8 +111,50 @@ vector<double> read_data_from_file(istream &datafile, int limit = INT_MAX)
     return data;
 }
 
-int process_input(char **argv, bool process_metric_input)
+std::string extract_wfh_type(const std::string &ev_filename)
 {
+    std::regex pattern("ev_data/ev_merged_T(\\d+)\\.csv");
+    std::smatch match;
+
+    if (std::regex_search(ev_filename, match, pattern) && match.size() > 1)
+    {
+        return match.str(1); // The captured group
+    }
+    else
+    {
+        return ""; // No match found
+    }
+}
+
+int extractLoadNumber(const std::string &filename)
+{
+    // Find the position of "load_"
+    size_t loadPos = filename.find("load_");
+    if (loadPos == std::string::npos)
+    {
+        std::cerr << "Error: 'load_' not found in filename." << std::endl;
+        return -1; // Error indicator
+    }
+
+    // Extract the substring starting from "load_" to the end of the filename
+    std::string numberStr = filename.substr(loadPos + 5); // 5 is the length of "load_"
+
+    // Remove ".txt" from the end of the number string
+    size_t txtPos = numberStr.find(".txt");
+    if (txtPos != std::string::npos)
+    {
+        numberStr = numberStr.substr(0, txtPos);
+    }
+
+    // Convert the number string to an integer
+    int loadNumber = std::stoi(numberStr);
+
+    return loadNumber;
+}
+
+int process_input(int argc, char **argv, bool process_metric_input)
+{
+    cout << "processing input" << endl;
 
     int i = 0;
 
@@ -193,7 +180,6 @@ int process_input(char **argv, bool process_metric_input)
     double panel_width = stod(panel_width_string);
     string panel_length_string = argv[++i];
     double panel_length = stod(panel_length_string);
-    panel_size = panel_width * panel_length; // Compute panel size
 
     // here, we assume that the max solar radiance is 1000W/m^2
     // times the size of the panel, which is in m^2. such as 1m^2 or 1.6m^2. It is decided in the solar simulation step
@@ -205,11 +191,6 @@ int process_input(char **argv, bool process_metric_input)
     // pv_max = stod(pv_max_string);
 
     // set default pv_min and pv_step
-    pv_min = 0;
-    // pv_step = (pv_max - pv_min) / num_pv_steps; // this is to assume that there are 350 panels on the rooftop. and for each rooftop it has 20/350
-    pv_step = panel_size * 0.2; // pv_step = 0.2 number of panels(if we have the assumption about the area of the panels)
-                                // now, I assume that the area of each panel is 1m^2.
-                                // because decrease the capacity of the solar system: 1m^2 * 1000W/m^2 * 20% / 1000W = 0.2kW
 
     // cout << "pvmax" << pv_max << endl;
 
@@ -360,6 +341,11 @@ int process_input(char **argv, bool process_metric_input)
     wfh_type = extract_wfh_type(path_to_ev_data);
     // cout << "wfh_type = " << wfh_type << endl;
 
+    chunk_size = days_in_chunk * 24 / T_u;
+    number_of_chunks = 100;
+
+    chunk_step = (load.size() / T_yr) * solar.size() / number_of_chunks;
+    cout << chunk_step << endl;
 #ifdef DEBUG
     cout << " path_to_ev_data = " << path_to_ev_data << endl;
 #endif
@@ -415,8 +401,10 @@ void load_solar_data(const string &output_dir)
         solar_dataset.push_back(file_data);
     }
 
-    // 计算 pv_max
-    pv_max = solar_dataset.size() * panel_size * 0.2;
-    cout << "panel_size: " << panel_size << endl;
+    pv_max = solar_dataset.size() * panelkW;
+    cout << "panel kW: " << panelkW << endl;
     cout << "Calculated pv_max: " << pv_max << endl;
+
+    pv_min = 0;
+    pv_step = (pv_max - pv_min) / num_pv_steps;
 }
