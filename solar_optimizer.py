@@ -262,17 +262,18 @@ def visualize_quads_and_panels(quads, panels_data, output_path):
     plt.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm),
                  ax=ax, label='Average Radiance', shrink=0.5)
 
-    ax.view_init(elev=20, azim=135)                                           # change the viewing angle here
                                                                               # for single_segment, 20 -45
                                                                               # for test2, smaller face 20 0
                                                                               # for test2, larger face 20, -90
                                                                               # new complex building, 20, 90
 
     #plt.show()
-    read_polyshape_3d.set_axes_equal(ax)
-    plt.show()
+    # read_polyshape_3d.set_axes_equal(ax)
+    # plt.show()
+    ax.view_init(elev=20, azim=135)                                           # change the viewing angle here
 
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.show()
     plt.close()  # Important to free memory
 
 
@@ -307,9 +308,9 @@ def run_optimization(meshes, panel_length, panel_width,num_panels, output_path):
 
 
 
-def read_and_remove_results():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = os.path.join(script_dir, "comprehensive_results.txt")
+def read_and_remove_results(path):
+    # script_dir = os.path.dirname(os.path.abspath(__file__))
+    filename = os.path.join(path, "comprehensive_results.txt")
 
     try:
         with open(filename, 'r') as f:
@@ -329,17 +330,17 @@ def read_and_remove_results():
 
 def main():
     import sys
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 5:
         print("Usage: solar_optimizer.py <num_panels> <panel_length> <panel_width> <output_path>")
         sys.exit(1)
     
     image_save = "."
-    comprehensive_results = read_and_remove_results()
+    comprehensive_results = read_and_remove_results(sys.argv[4])
 
     optimization_result = run_optimization(
         comprehensive_results, 
-        panel_length= 1,
-        panel_width= 1,
+        panel_length= int(sys.argv[2]),
+        panel_width= int(sys.argv[3]),
         num_panels= int(sys.argv[1]),
         output_path=image_save
     )

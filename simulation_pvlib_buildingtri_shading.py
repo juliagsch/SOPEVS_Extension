@@ -4,6 +4,7 @@ import sys
 import json
 import os
 import pprint
+import pytz
 
 import pandas as pd
 import numpy as np
@@ -12,11 +13,16 @@ from matplotlib.colors import Normalize
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pvlib.location import Location
 from pvlib.irradiance import get_total_irradiance
+from pvlib.iotools import get_pvgis_hourly
 import read_polyshape_3d
 from coplanarity_mesh import RoofSolarPanel
 from cartesian_lonlat import convert_coordinate_system, visualize_3d_mesh, convert_coordinate_system_building, interleave_mesh, building_format
 import matplotlib.pyplot as plt
 import shutil
+from timezonefinder import TimezoneFinder
+from global_land_mask import globe
+
+visualize = False
 
 def compute_centroid(triangle):
     """Calculate centroid with robust type checking"""
@@ -87,7 +93,10 @@ def calculate_tilt_azimuth(triangle):
     # Normalize and calculate angles
     normal /= np.linalg.norm(normal)
     tilt = np.degrees(np.arccos(normal[2]))
-    azimuth = (270-np.degrees(np.arctan2(normal[1], normal[0])))% 360
+    azimuth = np.degrees(np.arctan2(normal[1], normal[0])) # Counter clock-wise, 0 degrees pointing East
+    azimuth = (360-azimuth) % 360 # Convert to clock-wise
+    azimuth = (azimuth + 90) % 360 # Convert from 0 degrees pointing East to 0 degrees pointing North
+    print(azimuth)
 
     if np.isclose(tilt, 0.0):
         azimuth = 0.0 
@@ -104,17 +113,14 @@ def solar_vector(azimuth, zenith):
         np.cos(zen_rad)
     ])
 
-def is_shaded(triangle, solar_dir, building_triangles, num_samples):
+def is_shaded(centroid, solar_dir, building_triangles, num_samples):
     """Check shading using multiple rays across the triangle"""
-    sample_points = generate_sample_points(triangle, num_samples)
+    ray_origin = centroid + solar_dir * 0.1  # Offset to avoid self-intersection
 
-    for point in sample_points:
-        ray_origin = point + solar_dir * 1e-6  # Offset to avoid self-intersection
-
-        # Check against building triangles
-        for tri in building_triangles:
-            if ray_triangle_intersection(ray_origin, solar_dir, tri):
-                return True  # Shaded if any ray hits
+    # Check against centeroid
+    for tri in building_triangles:
+        if ray_triangle_intersection(ray_origin, solar_dir, tri):
+            return True  # Shaded if any ray hits
 
     return False  # Not shaded if all rays clear
 
@@ -144,120 +150,75 @@ def create_mesh_coordinate_map(mesh_triangles):
         for idx, (geometry, mesh_idx) in enumerate(mesh_triangles)  # Unpack tuple here
     }
 
-def plot_solar_access(shaded, unshaded, solar_azimuth, solar_zenith):
-    """
-    Visualizes 3D solar access analysis by plotting shaded and unshaded areas.
 
-    Parameters:
-    - shaded (list of arrays): List of polygons representing shaded areas.
-    - unshaded (list of arrays): List of polygons representing unshaded areas.
-    - solar_azimuth (float): Solar azimuth angle in degrees for the title.
-    - solar_zenith (float): Solar zenith angle in degrees for the title.
-    """
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Plot UNSHADED areas (green)
-    if unshaded:
-        unshaded_collection = Poly3DCollection(
-            unshaded,
-            facecolors='#00ff00',  # Bright green
-            edgecolors='#003300',  # Dark green edges
-            linewidths=0.3,
-            alpha=0.9,
-            zorder=2
-        )
-        ax.add_collection3d(unshaded_collection)
-
-    # Plot SHADED areas (red) on top
-    if shaded:
-        shaded_collection = Poly3DCollection(
-            shaded,
-            facecolors='#ff3300',  # Bright orange-red
-            edgecolors='#660000',  # Dark red edges
-            linewidths=0.3,
-            alpha=0.8,
-            zorder=3
-        )
-        ax.add_collection3d(shaded_collection)
-
-    # Set axes limits based on combined points
-    if shaded or unshaded:
-        all_points = np.concatenate(shaded + unshaded) if shaded else np.concatenate(unshaded)
-        min_vals = np.min(all_points, axis=0)
-        max_vals = np.max(all_points, axis=0)
-
-        padding = 0.1 * (max_vals - min_vals)
-        ax.set_xlim(min_vals[0] - padding[0], max_vals[0] + padding[0])
-        ax.set_ylim(min_vals[1] - padding[1], max_vals[1] + padding[1])
-        ax.set_zlim(min_vals[2] - padding[2], max_vals[2] + padding[2])
-
-    # Configure view and labels
-    ax.view_init(elev=45, azim=-45)
-    ax.set_xlabel('X Axis', fontsize=10, labelpad=10)
-    ax.set_ylabel('Y Axis', fontsize=10, labelpad=10)
-    ax.set_zlabel('Elevation', fontsize=10, labelpad=10)
-    ax.set_title(
-        f'Solar Access Map\nAzimuth: {solar_azimuth}°, Zenith: {solar_zenith}°',
-        fontsize=12, pad=15
-    )
-
-    # Add legend
-    legend_elements = [
-        plt.matplotlib.patches.Patch(facecolor='#00ff00', alpha=0.9, label='Direct Sunlight'),
-        plt.matplotlib.patches.Patch(facecolor='#ff3300', alpha=0.8, label='Shaded Areas')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=9)
-
-    # Optimize 3D rendering
-    plt.tight_layout()
-    ax.xaxis.set_pane_color((0.95, 0.95, 0.95))
-    ax.yaxis.set_pane_color((0.95, 0.95, 0.95))
-    ax.zaxis.set_pane_color((0.97, 0.97, 0.97))
-    ax.grid(False)
-
-    plt.show()
-
-def simulate_period_with_shading(centroid, tilt, azimuth, mesh_triangles, building_triangles, current_idx, timezone_str,
-                                 start_time, end_time, num_samples, time_base='hourly'):
+def simulate_period_with_shading(lat, lon, tilt, azimuth, mesh_triangles, building_triangles, current_idx, config):
     """Simulate solar flux for a mesh triangle considering shading from other meshes and buildings."""
     # Set up location and site
-    location = {
-        'latitude': centroid[1],
-        'longitude': centroid[0],
-        'timezone': timezone_str
-    }
-    site = Location(location['latitude'], location['longitude'], tz=location['timezone'])
-    triangle_geometry = mesh_triangles[current_idx]
-
+    timezone_str=config['timezone']
+    start_time=config['simulation_params']['start']
+    end_time=config['simulation_params']['end']
+    # time_base=config['simulation_params']['resolution']
+    num_samples=config['simulation_params']['shading_samples']
+    ts_offset = int(config['gmt_offset'])
+    
     # Generate time range
     start = pd.Timestamp(start_time).tz_localize(timezone_str)
     end = pd.Timestamp(end_time).tz_localize(timezone_str)
+    times = pd.date_range(start=start, end=end, freq='h', tz=timezone_str)
+    
+    # if time_base == 'hourly':
+    #     times = pd.date_range(start=start, end=end, freq='h', tz=timezone_str)
+    # elif time_base == 'daily':
+    #     start_date = start.floor('D')
+    #     end_date = end.ceil('D') - pd.Timedelta(seconds=1)
+    #     times = pd.date_range(start=start_date, end=end_date, freq='h', tz=timezone_str)
+    # elif time_base == 'weekly':
+    #     start_date = start.floor('D')
+    #     end_date = end.ceil('D') - pd.Timedelta(seconds=1)
+    #     times = pd.date_range(start=start_date, end=end_date, freq='h', tz=timezone_str)
+    # else:
+    #     raise ValueError("Invalid time_base")
 
-    if time_base == 'hourly':
-        times = pd.date_range(start=start, end=end, freq='h', tz=timezone_str)
-    elif time_base == 'daily':
-        start_date = start.floor('D')
-        end_date = end.ceil('D') - pd.Timedelta(seconds=1)
-        times = pd.date_range(start=start_date, end=end_date, freq='h', tz=timezone_str)
-    elif time_base == 'weekly':
-        start_date = start.floor('D')
-        end_date = end.ceil('D') - pd.Timedelta(seconds=1)
-        times = pd.date_range(start=start_date, end=end_date, freq='h', tz=timezone_str)
+    # times = times[(times >= start) & (times <= end)]
+    # if times.empty:
+    #     return {}
+
+    # Set name of the radiation database. 
+    # "PVGIS-SARAH" for Europe, Africa and Asia or 
+    # "PVGIS-NSRDB" for the Americas between 60°N and 20°S, 
+    # "PVGIS-ERA5" and "PVGIS-COSMO" for Europe (including high-latitudes)
+    if 'Australia' in timezone_str or 'America' in timezone_str:
+        raddatabase='PVGIS-ERA5'
     else:
-        raise ValueError("Invalid time_base")
+        raddatabase='PVGIS-SARAH3'
 
-    times = times[(times >= start) & (times <= end)]
-    if times.empty:
-        return {}
+    poa, _ = get_pvgis_hourly(
+        latitude=lat,
+        longitude=lon,
+        components=False,
+        # We need to simulate three years as the output is given in GMT+0 but we need to support all timezones.
+        # Therefore, we need values from the last day of the year before the start date and the first day of the year after the end year.
+        # The function only simulates full years.
+        start=start.year-1, 
+        end=start.year+1,
+        raddatabase=raddatabase,
+        surface_tilt=tilt,
+        surface_azimuth=azimuth,
+        usehorizon=True,
+        pvcalculation=True,
+        map_variables=True,
+        peakpower=1
+    )
+    poa = poa['poa_global']
+    poa = poa[8760-ts_offset:17520-ts_offset] # Shift to local timezone by taking values from following or previous year
 
-    # Get solar position and clearsky data
+    site = Location(lat, lon, tz=timezone_str, altitude=config['altitude'])
     solar_pos = site.get_solarposition(times)
-    clearsky = site.get_clearsky(times, model='ineichen', linke_turbidity=3.0)
-
 
     # Precompute shading status for each time point
     shaded_mask = np.zeros(len(times), dtype=bool)
+    triangle_geometry = np.array(mesh_triangles[current_idx])
+    centroid = np.mean(triangle_geometry, axis=0)
     for i, (ts, pos) in enumerate(solar_pos.iterrows()):
         # Only run shading on Mondays (0) — skip others
         if ts.dayofweek != 0:
@@ -268,37 +229,52 @@ def simulate_period_with_shading(centroid, tilt, azimuth, mesh_triangles, buildi
             solar_dir = solar_vector(solar_azimuth, solar_zenith)
 
             # Check if the current triangle is shaded at this time
-            shaded_mask[i] = is_shaded(triangle_geometry, solar_dir, building_triangles, num_samples)
-
-    # print(shaded_mask)
-    # Calculate irradiance for all timesteps
-    poa = get_total_irradiance(
-        surface_tilt=tilt,
-        surface_azimuth=azimuth,
-        dni=clearsky['dni'],
-        ghi=clearsky['ghi'],
-        dhi=clearsky['dhi'],
-        solar_zenith=solar_pos['apparent_zenith'],
-        solar_azimuth=solar_pos['azimuth']
-    )
+            shaded_mask[i] = is_shaded(centroid, solar_dir, building_triangles, num_samples)
 
 
 
     # Apply shading mask (set shaded timesteps to zero)
-    total_flux = poa['poa_global'].clip(lower=0)
-    total_flux[shaded_mask] = 0
+    total_flux = poa.clip(lower=0)
+
+    # with open("poa_unshaded.txt", 'w') as f:
+    #     # Write header
+    #     #f.write("Timestamp,Solar_Trace_kW_per_m2\n")
+
+    #     for i in total_flux:
+    #         f.write(f"{i/1000:.16f}\n")
+    
+    # total_flux[shaded_mask] = 0
+
+
+    # with open("poa_shaded.txt", 'w') as f:
+    #     # Write header
+    #     #f.write("Timestamp,Solar_Trace_kW_per_m2\n")
+
+    #     for i in total_flux:
+    #         f.write(f"{i/1000:.16f}\n")
+    
+
+
+    # with open("mask.txt", 'w') as f:
+    #     # Write header
+    #     #f.write("Timestamp,Solar_Trace_kW_per_m2\n")
+
+    #     for i in shaded_mask:
+    #         if i:
+    #             f.write(f"{0.5:.16f}\n")
+    #         else:
+    #             f.write(f"{0:.16f}\n")
+
 
     # Aggregate results based on time_base
-    if time_base == 'hourly':
-        aggregated = total_flux
-    elif time_base == 'daily':
-        aggregated = total_flux.resample('D').sum()
-    elif time_base == 'weekly':
-        aggregated = total_flux.resample('W').sum()
+    # if time_base == 'hourly':
+    #     aggregated = total_flux
+    # elif time_base == 'daily':
+    #     aggregated = total_flux.resample('D').sum()
+    # elif time_base == 'weekly':
+    #     aggregated = total_flux.resample('W').sum()
 
-    #print(times)
-    #print(poa)
-    return {ts.to_pydatetime(): val for ts, val in aggregated.items()}
+    return {ts.to_pydatetime(): val for ts, val in total_flux.items()}
 
 
 def create_comprehensive_results(averages, coordinate_map):
@@ -329,9 +305,10 @@ def load_and_process_building(params):
         F=faces,
         **params['panel_config']
     )
-    roof.display_building_and_rooftops()
-    roof.plot_building_with_mesh_grid()
-    roof.plot_rooftops_with_mesh_points()
+    if visualize:
+        roof.display_building_and_rooftops()
+        roof.plot_building_with_mesh_grid()
+        roof.plot_rooftops_with_mesh_points()
 
 
     ground_centroid = roof.get_ground_centroid()[:2]
@@ -351,6 +328,8 @@ def load_and_process_building(params):
 
     original_building_triangles = []
     vertices, faces = read_polyshape_3d.read_surroundings(params['obstruction_file'], offset)
+    if visualize:
+        roof.plot_rooftops_with_mesh_grid(vertices, faces)
     original_building = building_format(vertices)
 
     for face in faces:
@@ -390,35 +369,6 @@ def process_solar_meshes(roof, params):
     return converted_mesh, converted_mesh_triangles, original_mesh, original_mesh_triangles
 
 
-
-# For the clarity of the main. To debug, see try.pvlib_shaded_simulation
-def generate_sample_points(triangle, num_samples=11):
-    """Generate multiple sample points on a triangle (centroid + edge midpoints)."""
-    samples = []
-    # Centroid
-    centroid = compute_centroid(triangle)
-    samples.append(centroid)
-    # Edge midpoints
-    triangle = np.array(triangle)  # Ensure it's a numpy array
-    for i in range(3):
-        midpoint = (triangle[i] + triangle[(i+1) % 3]) / 2.0
-        samples.append(midpoint)
-    return samples[:num_samples]
-
-# def calculate_shading_status(mesh_triangles, building_triangles, solar_azimuth, solar_zenith, num_samples=1):
-#     """Simplified shading calculation using enhanced is_shaded"""
-#     solar_dir = solar_vector(solar_azimuth, solar_zenith)
-#     shaded = []
-#     unshaded = []
-
-#     for idx, (tri, mesh_idx) in enumerate(mesh_triangles):
-#         if is_shaded(tri, solar_dir, building_triangles, num_samples):
-#             shaded.append(tri)
-#         else:
-#             unshaded.append(tri)
-
-#     return shaded, unshaded
-
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
 def process_results(raw_results, coordinate_map):
     """Process and enrich simulation results"""
@@ -443,15 +393,15 @@ def initialize_components(config):
 
     return (
         {
-            'building_triangles': building_triangles,
+            # 'building_triangles': building_triangles,
             'roof': roof,
-            'converted_building': converted_building,
+            # 'converted_building': converted_building,
             'original_building': original_building,
             'original_building_triangles': original_building_triangles,
         },
         {
-            'mesh_triangles': mesh_triangles,
-            'converted_mesh': converted_mesh,
+            # 'mesh_triangles': mesh_triangles,
+            # 'converted_mesh': converted_mesh,
             'coordinate_map': coordinate_map,
             'original_mesh': original_mesh,
             'original_mesh_triangles': original_mesh_triangles,
@@ -462,50 +412,42 @@ def initialize_components(config):
 def run_complete_simulation(building_data, solar_meshes, config):
     """Execute full solar potential simulation"""
     # Prepare simulation data
-    mesh_data = prepare_mesh_data(solar_meshes['mesh_triangles'], solar_meshes['original_mesh_triangles'])
+    mesh_data = prepare_mesh_data(solar_meshes['original_mesh_triangles'])
+    lat, lon = config['geo_centroid']
     # mesh_data = prepare_mesh_data(building_data['roof'].mesh_objects)
 
     # Run simulation for each mesh element
+    import time
     results = {}
-    for idx, (centroid, orientation) in enumerate(zip(mesh_data['centroids'], mesh_data['orientations'])):
-        print(orientation)
-        results[f"Mesh_{idx + 1}"] = execute_single_simulation(
-            centroid=centroid,
+    breaking = False
+    for idx, orientation in enumerate(mesh_data['orientations']):
+        print(orientation, " faces: ", len(building_data))
+        start = time.time()
+        results[f"Mesh_{idx + 1}"] = simulate_period_with_shading(
+            lat=lat,
+            lon=lon,
             tilt=orientation[0],
             azimuth=orientation[1],
-            building_data=building_data,
-            solar_meshes=solar_meshes,
+            mesh_triangles=[tri for tri, _ in solar_meshes['original_mesh_triangles']],
+            building_triangles=building_data['original_building_triangles'],
+            current_idx=idx,
             config=config,
-            mesh_idx=idx
         )
+        print("duration: ", time.time()-start)
+        
+        if breaking:
+            break
+        breaking = True
 
     return results
 
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
-def prepare_mesh_data(mesh_triangles, original_mesh_triangles):
+def prepare_mesh_data(original_mesh_triangles):
     """Prepare mesh data for simulation"""
     return {
         'orientations': [calculate_tilt_azimuth(tri) for tri, _ in original_mesh_triangles],
-        'centroids': [compute_centroid(tri) for tri, _ in mesh_triangles]
-        # Removed coordinate map creation from here
+        # 'centroids': [compute_centroid(tri) for tri, _ in mesh_triangles]
     }
-
-# For the clarity of the main. To debug, see try.pvlib_shaded_simulation
-def execute_single_simulation(centroid, tilt, azimuth, building_data, solar_meshes, config, mesh_idx):
-    """Run simulation for a single mesh element"""
-    return simulate_period_with_shading(
-        centroid=centroid,
-        tilt=tilt,
-        azimuth=azimuth,
-        mesh_triangles=[tri for tri, _ in solar_meshes['original_mesh_triangles']],
-        building_triangles=building_data['original_building_triangles'],
-        current_idx=mesh_idx,
-        timezone_str=config['timezone'],
-        start_time=config['simulation_params']['start'],
-        end_time=config['simulation_params']['end'],
-        time_base=config['simulation_params']['resolution'],
-        num_samples=config['simulation_params']['shading_samples']
-    )
 
 # For the clarity of the main. To debug, see try.pvlib_shaded_simulation
 def final_results(raw_results, solar_meshes):
@@ -573,76 +515,6 @@ def create_3d_visualization(results_data):
     plt.show()
 
 
-def create_3d_visualization_1(results_data, color_groups=None):
-    # Generate 3D visualization of results with mesh labels and optional color groups
-    radiances = [mesh['average_radiance'] for mesh in results_data.values()]
-    norm = Normalize(vmin=min(radiances), vmax=max(radiances))
-    cmap = plt.cm.viridis
-
-    # Handle color groups
-    mesh_to_group_color = {}
-    if color_groups is not None:
-        group_cmap = plt.cm.get_cmap('tab10')  # Using qualitative colormap for groups
-        for group_idx, group in enumerate(color_groups):
-            color = group_cmap(group_idx % group_cmap.N)  # Cycle colors if needed
-            for mesh_id in group:
-                mesh_to_group_color[mesh_id] = color
-
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Plot meshes with labels
-    for mesh_id, mesh in results_data.items():
-        # Plot the polygon
-        coords = np.array(mesh['original_coordinates'])
-        polygon = Poly3DCollection([coords], alpha=0.8)
-
-        # Determine face color based on group or radiance
-        if mesh_id in mesh_to_group_color:
-            polygon.set_facecolor(mesh_to_group_color[mesh_id])
-        else:
-            polygon.set_facecolor(cmap(norm(mesh['average_radiance'])))
-
-        ax.add_collection3d(polygon)
-
-        # Add mesh number label at centroid (existing code remains unchanged)
-        mesh_number = int(mesh_id.split('_')[1])
-        centroid = mesh['centroid']
-        """
-        ax.text(
-            centroid[0], centroid[1], centroid[2],
-            str(mesh_number),
-            color='white',
-            fontsize=9,
-            ha='center',
-            va='center',
-            bbox=dict(
-                boxstyle="round",
-                facecolor='black',
-                alpha=0.7,
-                edgecolor='none'
-            ),
-            zorder=4
-        )
-        """
-
-    # Configure axes and colorbar (existing code remains unchanged)
-    ax.set_xlabel('X Axis', fontsize=9)
-    ax.set_ylabel('Y Axis', fontsize=9)
-    ax.set_zlabel('Elevation', fontsize=9)
-    ax.grid(True)
-
-    # Add colorbar for radiance values (only affects non-grouped meshes)
-    sm = ScalarMappable(norm=norm, cmap=cmap)
-    cbar = plt.colorbar(sm, ax=ax, pad=0.1)
-    cbar.set_label('Average Radiance (W/m²)', fontsize=10)
-
-    # Set viewing angle
-    ax.view_init(elev=45, azim=-45)
-    plt.tight_layout()
-    plt.show()
-
-
 def save_hourly_data_to_txt(simulation_results, output_dir):
     """Save hourly irradiance data for mesh pairs to text files."""
     import os
@@ -677,58 +549,9 @@ def save_hourly_data_to_txt(simulation_results, output_dir):
                     values.append(simulation_results[mesh_id].get(ts, 0))
 
                 # Calculate average
-                avg_irradiance = (np.mean(values) * 0.2 /1000) if values else 0
+                avg_production = (np.mean(values) /1000) if values else 0
                 #meshes_list = ','.join([m.split('_')[1] for m in mesh_pair])
-
-                # Write formatted line
-                iso_time = ts.isoformat()
-                #f.write(f"{iso_time},{avg_irradiance:.16f}\n")
-                f.write(f"{avg_irradiance:.16f}\n")
-        #print(f"Saved {filename} containing: {', '.join(mesh_pair)}")
-
-"""
-if __name__ == '__main__':
-    # Load configuration parameters
-    CONVERSION_PARAMS = {
-    'input_file': "C:/Users/Sharon/Desktop/SGA21_roofOptimization-main/SGA21_roofOptimization-main/RoofGraphDataset/res_building/single_segment.txt",
-    'earth_radius': 6378137.0,
-    'geo_centroid': (52.1986125198786, 0.11358089726501427),
-    'unit_scaling': (1.0, 1.0, 1.0),
-    'timezone': 'Europe/London',
-    'panel_config': {
-        'panel_dx': 1.0,
-        'panel_dy': 1.0,
-        'max_panels': 10,
-        'b_scale_x': 0.05,
-        'b_scale_y': 0.05,
-        'b_scale_z': 0.05,
-        'grid_size': 1.0            #so now, when I do the simulation, it is 1m^2 for each mesh grid, if input is 1
-                                    #the triangular meshgrid is triangulated, so it should be 1/2 3/4... averaged between the 2
-    },
-    'simulation_params': {
-        'start': datetime.datetime(2023, 1, 1, 0, 0),
-        'end': datetime.datetime(2023, 12, 31, 23, 0),
-        'resolution': 'hourly',
-        'shading_samples': 1     # when simulating the ray-tracing algo, the number of samples drawn
-    },
-    'visualization': {
-        'face_color': plt.cm.viridis(0.5),
-        'edge_color': 'k',
-        'alpha': 0.5,
-        'labels': ('Longitude', 'Latitude', 'Elevation (m)')
-    }
-    }
-
-    # Run a complete simulation
-    building_data, solar_meshes = initialize_components(CONVERSION_PARAMS)
-    simulation_results = run_complete_simulation(building_data, solar_meshes, CONVERSION_PARAMS)
-
-    save_hourly_data_to_txt(simulation_results)
-
-    comprehensive_results = final_results(simulation_results, solar_meshes)
-    #create_3d_visualization(comprehensive_results)
-"""
-
+                f.write(f"{avg_production:.16f}\n")
 
 def convert_to_serializable(obj):
     """Recursively convert numpy types to Python native types"""
@@ -744,10 +567,9 @@ def convert_to_serializable(obj):
         return [convert_to_serializable(x) for x in obj]
     return obj
 
-def save_comprehensive_results(results):
+def save_comprehensive_results(results, output_dir):
     """Save comprehensive results to text file with proper serialization"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = os.path.join(script_dir, "comprehensive_results.txt")
+    filename = os.path.join(output_dir, "comprehensive_results.txt")
     
     try:
         # Convert numpy types to JSON-serializable formats
@@ -764,81 +586,113 @@ def save_comprehensive_results(results):
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
 
+
+def get_timezone(lat, lon, year):
+    """Get timezone name and offset from GMT from coordinates"""
+    tf = TimezoneFinder()
+    timezone_str = tf.timezone_at(lng=lon, lat=lat)
+    tz = pytz.timezone(timezone_str)
+
+    # Choose a date in DST (January 1 for north, July 1 for south)
+    dt = datetime.datetime(year, 1, 1) if lat > 0 else datetime.datetime(year, 7, 1)
+
+    # If this date is in DST, shift to the other half of the year
+    if tz.dst(dt) != datetime.timedelta(0):
+        dt = datetime.datetime(year, 7, 1) if lat > 0 else datetime.datetime(year, 1, 1)
+
+
+    gmt_offset = tz.utcoffset(dt).total_seconds() / 3600
+    gmt_offset = np.ceil(gmt_offset) # We round up half hour time zones as we consider hourly time steps
+    return timezone_str, gmt_offset
+
+
 def main():
     if len(sys.argv) != 2:
         # print("Usage: python solar_optimizer.py <output_dir>")
         # sys.exit(1)
-        output_dir = "./out_noshading"
+        output_dir = "./out_noshading" 
     else:
-        output_dir = sys.argv[1]
+        output_dir = sys.argv[1] 
     
+    filename = "2613471_1232999_2613482_1233008_"
+    # lat, lon = 47.21, 7.54# ontario 50.2088, -90.5323
+    lat, lon = 50.2088, -90.5323
+    lat, lon = -33.2088, 150.5323
+
+    altitude = 500
+    year = 2010
+
+    if year > 2022 or year < 2006:
+        raise Exception("Choose a year between 2006 and 2022")
+
+    if not globe.is_land(lat=lat, lon=lon):
+        print("Please choose coordinates on land.")
+        sys.exit()
+
+    timezone_str, offset_hours = get_timezone(lat, lon, year)
+
+    CONVERSION_PARAMS = {
+        'input_file': f"./roofs/{filename}.obj",
+        'obstruction_file': f"./surroundings/{filename}.obj",
+        'earth_radius': 6378137.0,
+        # 'geo_centroid': (52.1986125198786, 0.11358089726501427), #England
+        #'geo_centroid': (-69.3872203183979, -67.70319583227294), #antarctic
+        #'geo_centroid': (-42.2812963915156, 172.8486127892288), #New Zealand
+        #'geo_centroid': (-33.36185896158091, 23.879985430205615), # South Africa
+        'geo_centroid': (lat, lon), #Switzerland
+        'altitude': altitude,
+
+        # for variation of latitude
+        # 'geo_centroid': (0, 23.879985430205615), # 
+        #'geo_centroid': (20, 23.879985430205615), # 
+        # 'geo_centroid': (-40, 23.879985430205615), # 
+        #'geo_centroid': (60, 23.879985430205615), # 
+        #'geo_centroid': (70, 23.879985430205615), # 
+        #'geo_centroid': (80, 23.879985430205615), # 
+
+
+        'unit_scaling': (1.0, 1.0, 1.0),
+        'timezone': timezone_str, 
+        'gmt_offset': offset_hours,
+        'panel_config': {
+            'panel_dx': 1.0,
+            'panel_dy': 1.0,
+            'max_panels': 10,
+            'b_scale_x': 1,
+            'b_scale_y': 1,
+            'b_scale_z': 1,
+            # 'exclude_face_indices': [],   # 2 for test 2, 9 for test
+            'grid_size': 1.0                #m^2 for each mesh grid
+        },
+        'simulation_params': {
+            'start': datetime.datetime(year, 1, 1, 0, 0),
+            'end': datetime.datetime(year, 12, 30, 23, 0) if year % 4 == 0 else datetime.datetime(year, 12, 31, 23, 0), # Simulate 365 days of the year
+            'resolution': 'hourly',
+            'shading_samples': 1     # when simulating the ray-tracing algo, the number of samples drawn
+        },
+        # 'visualization': {
+        #     'face_color': plt.cm.viridis(0.5),
+        #     'edge_color': 'k',
+        #     'alpha': 0.5,
+        #     'labels': ('Longitude', 'Latitude', 'Elevation (m)')
+        # }
+    }
+
+    print(CONVERSION_PARAMS)
+
+    # Run a complete simulation
+    building_data, solar_meshes = initialize_components(CONVERSION_PARAMS)
+    simulation_results = run_complete_simulation(building_data, solar_meshes, CONVERSION_PARAMS)
+
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
 
     # Recreate the directory
     os.makedirs(output_dir)
-    filename = "2615202_1235060_2615220_1235078_"
 
-    CONVERSION_PARAMS = {
-    'input_file': f"./roofs/{filename}.obj",
-    'obstruction_file': f"./surroundings/{filename}.obj",
-    'earth_radius': 6378137.0,
-    # 'geo_centroid': (52.1986125198786, 0.11358089726501427), #England
-    #'geo_centroid': (-69.3872203183979, -67.70319583227294), #antarctic
-    #'geo_centroid': (-42.2812963915156, 172.8486127892288), #New Zealand
-    #'geo_centroid': (-33.36185896158091, 23.879985430205615), # South Africa
-    'geo_centroid': (47.2088, 7.5323), #Switzerland
-
-    # for variation of latitude
-    # 'geo_centroid': (0, 23.879985430205615), # 
-    #'geo_centroid': (20, 23.879985430205615), # 
-    # 'geo_centroid': (-40, 23.879985430205615), # 
-    #'geo_centroid': (60, 23.879985430205615), # 
-    #'geo_centroid': (70, 23.879985430205615), # 
-    #'geo_centroid': (80, 23.879985430205615), # 
-
-
-    'unit_scaling': (1.0, 1.0, 1.0),
-    'timezone': 'Europe/Zurich', 
-    'panel_config': {
-        'panel_dx': 1.0,
-        'panel_dy': 1.0,
-        'max_panels': 10,
-        'b_scale_x': 1,
-        'b_scale_y': 1,
-        'b_scale_z': 1,
-        'exclude_face_indices': [],   # 2 for test 2, 9 for test
-        'grid_size': 1.0            #so now, when I do the simulation, it is 1m^2 for each mesh grid, if input is 1
-                                    #the triangular meshgrid is triangulated, so it should be 1/2 3/4... averaged between the 2
-    },
-    'simulation_params': {
-        'start': datetime.datetime(2023, 1, 1, 0, 0),
-        'end': datetime.datetime(2023, 12, 31, 23, 0),
-        'resolution': 'hourly',
-        'shading_samples': 1     # when simulating the ray-tracing algo, the number of samples drawn
-    },
-    'visualization': {
-        'face_color': plt.cm.viridis(0.5),
-        'edge_color': 'k',
-        'alpha': 0.5,
-        'labels': ('Longitude', 'Latitude', 'Elevation (m)')
-    },
-    'plot_style': {
-            'face_color': plt.cm.viridis(0.5),
-            'edge_color': 'k',
-            'alpha': 0.5,
-            'labels': ('Longitude', 'Latitude', 'Elevation (m)')
-        }
-    }
-
-    # Run a complete simulation
-    building_data, solar_meshes = initialize_components(CONVERSION_PARAMS)
-    simulation_results = run_complete_simulation(building_data, solar_meshes, CONVERSION_PARAMS)
     save_hourly_data_to_txt(simulation_results,output_dir)
     comprehensive_results = final_results(simulation_results, solar_meshes)
-    save_comprehensive_results(comprehensive_results)  # Comprehensive results to script dir
-
-
+    save_comprehensive_results(comprehensive_results, output_dir)  # Comprehensive results to script dir
 
     return True
 

@@ -465,7 +465,7 @@ class RoofSolarPanel:
         plt.legend(loc='upper left', markerscale=2, fontsize=8)
         plt.show()
 
-    def plot_rooftops_with_mesh_grid(self):
+    def plot_rooftops_with_mesh_grid(self, surroundings_v, surroundings_f):
         """
         Plots the rooftop structure along with the generated mesh grid as quadrilaterals.
 
@@ -496,7 +496,12 @@ class RoofSolarPanel:
                 x = square_points[:, 0]
                 y = square_points[:, 1]
                 z = square_points[:, 2]
-                ax.plot_trisurf(x, y, z, color='blue', alpha=0.7, edgecolor='black')
+                ax.plot_trisurf(x, y, z, color='blue', alpha=0.6, edgecolor='black')
+
+        
+        for face in surroundings_f:
+            poly = surroundings_v[face]
+            ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=1, color='grey', edgecolor='k')
 
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
@@ -611,7 +616,7 @@ if __name__ == "__main__":
     # roof.plot_rooftops_with_mesh_points()
 
     # display the rooftop with mesh grid
-    roof.plot_rooftops_with_mesh_grid()
+    # roof.plot_rooftops_with_mesh_grid()
 
     # display the building with mesh grid
     roof.plot_building_with_mesh_grid()
