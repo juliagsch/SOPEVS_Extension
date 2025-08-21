@@ -18,7 +18,7 @@ double pv_min;
 double pv_max;
 double pv_step; // search in steps of x kW
 double panelkW = 0.2;
-double system_size_trace_pv = 0.2;
+double system_size_trace_pv = 1.0; // system size assumed in input solar traces
 double max_soc;
 double min_soc;
 double ev_battery_capacity = 40.0;
