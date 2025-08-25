@@ -3,7 +3,7 @@ import open3d as o3d
 import trimesh
 
 from dataclasses import dataclass
-from raytracing import ray_polygon_intersection
+from raytracing import ray_polygon_intersection, triangulate_polygon
 from typing import List
 
 @dataclass
@@ -174,6 +174,13 @@ class Scene:
         return tilt, azimuth
 
 
+    def generate_check_points(self, u, v, u_end, v_end, samples=10):
+        """Generate interior test points on a grid."""
+        xs = np.linspace(u, u_end, samples)
+        ys = np.linspace(v, v_end, samples)
+        return [(x, y) for x in xs for y in ys]
+
+
     def generate_grid(self, face):
         """
         Divide a roof face into square tiles of size grid_size.
@@ -231,14 +238,8 @@ class Scene:
                     v += step
                     continue
 
-                # Check if square is fully inside polygon (corners + midpoints + center)
-                check_points = [
-                    (u, v), (u_end, v), (u_end, v_end), (u, v_end),
-                    ((u+u_end)/2, v), ((u+u_end)/2, v_end),
-                    (u, (v+v_end)/2), (u_end, (v+v_end)/2),
-                    ((u+u_end)/2, (v+v_end)/2)
-                ]
-
+                # Check if square is fully inside polygon
+                check_points = self.generate_check_points(u, v, u_end, v_end, samples=3)
                 if all(self.point_in_polygon(x, y, uv_coords) for x, y in check_points):
                     squares_uv.append((u, v, u_end, v_end))
 
@@ -276,9 +277,7 @@ class Scene:
     
 
     def simplify_surroundings(self):
-        print("before ", len(self.surroundings_F))
         filtered_faces = self.filter_faces(self.surroundings_V, self.surroundings_F, self.min_z_roof)
-        print("filtered ", len(filtered_faces))
 
         mesh = trimesh.Trimesh(vertices=np.array(self.surroundings_V), faces=(np.array(filtered_faces)))
         o3d_mesh = o3d.geometry.TriangleMesh(
@@ -288,5 +287,16 @@ class Scene:
         # Simplify
         simplified_o3d = o3d_mesh.simplify_quadric_decimation(self.target_faces)
 
-        self.surroundings_V = np.array(simplified_o3d.vertices)
-        self.surroundings_F = np.array(simplified_o3d.triangles)
+        self.surroundings_V = np.asarray(simplified_o3d.vertices)
+        self.surroundings_F = np.asarray(simplified_o3d.triangles).tolist()
+
+        num_v = len(self.surroundings_V)
+        for building_poly in self.building_F:
+            triangles = triangulate_polygon(building_poly)
+            for tri in triangles:
+                self.surroundings_F.append(np.array(tri)+num_v)
+
+        self.surroundings_V = np.vstack([self.surroundings_V, self.building_V])
+        # mesh = trimesh.Trimesh(vertices=np.array(self.surroundings_V), faces=(np.array(self.surroundings_F)))
+        # mesh.show()
+

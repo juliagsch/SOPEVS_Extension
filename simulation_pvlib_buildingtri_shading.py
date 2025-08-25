@@ -15,6 +15,7 @@ import shutil
 from timezonefinder import TimezoneFinder
 from global_land_mask import globe
 import visualize
+import subprocess
 from raytracing import ray_triangle_intersection
 
 enable_visualize = True
@@ -24,17 +25,17 @@ def solar_vector(azimuth, zenith):
     """Convert solar angles to 3D direction vector"""
     az_rad = np.radians(azimuth)
     zen_rad = np.radians(zenith)
-    return np.array([
+    v = np.array([
         np.sin(zen_rad) * np.sin(az_rad),
         np.sin(zen_rad) * np.cos(az_rad),
         np.cos(zen_rad)
     ])
+    return v / np.linalg.norm(v)
 
 
 def is_shaded(origin, solar_dir, occlusion_triangles):
     """Check shading using multiple rays across the triangle"""
-    ray_origin = origin + solar_dir * 0.1  # Offset by 10 cm to avoid self-intersection
-
+    ray_origin = origin + solar_dir * 0.25  # Offset by 25 cm to avoid self-intersection
     # Check against centeroid
     for tri in occlusion_triangles:
         if ray_triangle_intersection(ray_origin, solar_dir, tri):
@@ -126,6 +127,7 @@ def initialize_scene(config):
         visualize.plot_building(scene.building_V, scene.building_F)
         visualize.plot_rooftops(scene.building_V, scene.roof_faces)
         visualize.plot_building_with_mesh_grid(scene.building_V, scene.building_F, scene.panels)
+        visualize.plot_building_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels)
         visualize.plot_rooftops_with_mesh_points(scene.building_V, scene.roof_faces, scene.panels)
         visualize.plot_rooftops_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels, scene.surroundings_V, scene.surroundings_F)
     return scene
@@ -149,7 +151,6 @@ def simulate_roof_segment(scene, roof_segment, config):
     solar_pos = site.get_solarposition(times)
 
     production_per_panel = [pv_production.copy() for _ in range(len(roof_segment.panels))]
-
     # Shading simulation for every panel position on roof segment
     for t_idx, (ts, pos) in enumerate(solar_pos.iterrows()):
         print(t_idx)
@@ -186,7 +187,7 @@ def simulate_roof_segment(scene, roof_segment, config):
             if panel_shaded:
                 production_per_panel[panel_idx][t_idx] = 0
             else:
-                centroid = np.mean(np.array(panel))
+                centroid = np.mean(np.array(panel), axis=0)
                 if is_shaded(centroid, solar_dir, scene.surroundings_triangles):
                     production_per_panel[panel_idx][t_idx] = 0
 
@@ -281,11 +282,19 @@ def main():
 
     filename = "2615150_1233155_2615160_1233165"
     filename = "2613504_1233184_2613514_1233192"
-    lat, lon = 47.21, 7.54
-    # lat, lon = 50.2088, -90.5323 #ontario
-    # lat, lon = -33.2088, 150.5323 #sydney
-
+    filename = "2613096_1233451_2613111_1233466"
+    filename = "2613235_1235070_2613243_1235083"
+    filename = "2613096_1233451_2613111_1233466"
+    # lat, lon = 47.21, 7.54
     altitude = 500
+    # lat, lon = 50.2088, -90.5323 #ontario
+    lat, lon = -33.2088, 150.5323 #sydney
+    # lat, lon = 0, 10.54
+
+    eue_target = 0.2
+    ev_path = 'ev_merged.csv'
+    op = 'safe_departure'
+
     
     if not globe.is_land(lat=lat, lon=lon):
         print("Please choose coordinates on land.")
@@ -304,7 +313,7 @@ def main():
         'timezone': timezone_str, 
         'gmt_offset': offset_hours,
         'grid_size': 1.0, # in m^2 for each mesh cell
-        'target_faces': 500,
+        'target_faces': 250,
 
         'simulation_params': {
             'start': datetime.datetime(2022, 1, 1, 0, 0),
@@ -325,11 +334,21 @@ def main():
     save_hourly_data_to_txt(simulation_results, output_dir)
     comprehensive_results = create_comprehensive_results(scene, simulation_results)
     save_comprehensive_results(comprehensive_results, output_dir)
+
+    # Get optimal sizing
+    num_panels = 2
+
+    command = f"sizing_simulation/sim 1250 460 1 1 30 1 {eue_target} 0.9 365 load.txt {output_dir} 0.8 0.2 60 7.4 {op} {ev_path} 20"
+    result = subprocess.run(command.split(), stdout=subprocess.PIPE, text=True)
+    result = result.stdout.split("\t")
+    battery, solar = result[0], result[1]
+    print(battery, solar)
+    num_panels = np.ceil(float(solar)/0.2)
     
     comprehensive_results = solar_optimizer.read_results(output_dir)
     panel_placement = solar_optimizer.optimize_panel_placement(
         comprehensive_results,
-        num_panels=4,
+        num_panels=num_panels,
         quad_size=1,
         panel_length=1,
         panel_width=1

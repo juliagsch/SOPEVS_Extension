@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
+elev, azim = 25, 160
 
 def set_axes_equal(ax):
     '''Make axes of 3D plot have equal scale.'''
@@ -76,7 +77,7 @@ def plot_solar_access(shaded, unshaded, solar_azimuth, solar_zenith):
         ax.set_zlim(min_vals[2] - padding[2], max_vals[2] + padding[2])
 
     # Configure view and labels
-    ax.view_init(elev=45, azim=-90)
+    ax.view_init(elev=elev, azim=azim)
     ax.set_xlabel('X Axis', fontsize=10, labelpad=10)
     ax.set_ylabel('Y Axis', fontsize=10, labelpad=10)
     ax.set_zlabel('Elevation', fontsize=10, labelpad=10)
@@ -125,7 +126,7 @@ def plot_building(verts, faces):
     ax.set_zlabel('Z')
     set_axes_equal(ax)
 
-    ax.view_init(elev=45, azim=-90)
+    ax.view_init(elev=elev, azim=azim)
     plt.show()
 
 
@@ -136,15 +137,15 @@ def plot_rooftops(verts, roof_faces):
     # Plot all vertices and rooftop faces
     ax.scatter(verts[:, 0], verts[:, 1], verts[:, 2], c='grey', alpha=0.3)
     for face in roof_faces:
-        poly = verts[face]
-        ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=0.5)
+        poly = Poly3DCollection([verts[face]], alpha=0.5, edgecolor='k', linewidths=1)
+        ax.add_collection3d(poly)
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     set_axes_equal(ax)
 
-    ax.view_init(elev=45, azim=-90)
+    ax.view_init(elev=elev, azim=azim)
     plt.show()
 
 
@@ -166,7 +167,9 @@ def plot_rooftops_with_mesh_points(roof_v, roof_faces, mesh_objects):
     # Plot rooftop faces
     for face in roof_faces:
         poly = roof_v[face]
-        ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=0.5, color='cyan', edgecolor='k')
+        poly = Poly3DCollection([poly], alpha=0.5, edgecolor='k', linewidths=1)
+        poly.set_facecolor(np.random.rand(3, ))
+        ax.add_collection3d(poly)
 
     # Plot mesh grid points
     for square in mesh_objects:
@@ -178,7 +181,7 @@ def plot_rooftops_with_mesh_points(roof_v, roof_faces, mesh_objects):
     ax.set_zlabel('Z')
     set_axes_equal(ax)
 
-    ax.view_init(elev=45, azim=-90)
+    ax.view_init(elev=elev, azim=azim)
     ax.set_title("Rooftop with Mesh Points")
     plt.legend(loc='upper left', markerscale=2, fontsize=8)
     plt.show()
@@ -201,7 +204,9 @@ def plot_rooftops_with_mesh_grid(roof_v, roof_faces, mesh_objects, surroundings_
     ax.scatter(roof_v[:, 0], roof_v[:, 1], roof_v[:, 2], c='grey', alpha=0.3, label='Vertices')
     for face in roof_faces:
         poly = roof_v[face]
-        ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=0.5, color='cyan', edgecolor='k')
+        poly = Poly3DCollection([poly], alpha=0.5, edgecolor='k', linewidths=1)
+        poly.set_facecolor(np.random.rand(3, ))
+        ax.add_collection3d(poly)
 
     # Plot the mesh grid as quadrilaterals
     for square in mesh_objects:
@@ -211,15 +216,16 @@ def plot_rooftops_with_mesh_grid(roof_v, roof_faces, mesh_objects, surroundings_
         z = square_points[:, 2]
         ax.plot_trisurf(x, y, z, color='blue', alpha=0.6, edgecolor='black')
 
-    
     for face in surroundings_f:
-        poly = surroundings_v[face]
-        ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=0.3, color='grey', edgecolor='k')
+        poly = Poly3DCollection([surroundings_v[face]], alpha=0.4, edgecolor='k', linewidths=1)
+        poly.set_facecolor((0.2,0.2,0.2))
+        ax.add_collection3d(poly)
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     set_axes_equal(ax)
+    ax.view_init(elev=elev, azim=azim)
 
     ax.set_title("Rooftop with Mesh Grid")
     plt.legend(loc='upper left', markerscale=2, fontsize=8)
@@ -263,7 +269,7 @@ def plot_building_with_mesh_grid(roof_v, roof_f, mesh_objects):
     ax.set_zlabel('Z')
     set_axes_equal(ax)
 
-    ax.view_init(elev=45, azim=-90)
+    ax.view_init(elev=elev, azim=azim)
     plt.title('Building Model with Mesh Grid')
     plt.show()
 
@@ -282,23 +288,23 @@ def visualize_quads_and_panels(quads, panels_data, surroundings=None):
     for quad in quads.values():
         poly = Poly3DCollection([quad['original_coordinates']],
                                 facecolor=cmap(norm(round(quad['average_radiance'],1))),
-                                edgecolor='gray', alpha=0.4)
+                                edgecolor='gray', alpha=0.9)
         ax.add_collection3d(poly)
 
     # Plot panels
-    colors = ['grey']
+    colors = ['red']
     for i, panel in enumerate(panels_data['panels']):
         for quad in panel['original_coordinates']:
             poly = Poly3DCollection([quad],
                                     facecolor=colors[i % len(colors)],
-                                    edgecolor='black', alpha=0.6)
+                                    edgecolor='black', alpha=0.8)
             ax.add_collection3d(poly)
 
     if surroundings is not None:
         surroundings_V, surroundings_F = surroundings
         for face in surroundings_F:
-            poly = surroundings_V[face]
-            ax.plot_trisurf(poly[:, 0], poly[:, 1], poly[:, 2], alpha=0.3, color='grey', edgecolor='k')
+            poly = Poly3DCollection([surroundings_V[face]], alpha=0.3, edgecolor='gray', linewidths=1)
+            ax.add_collection3d(poly)
 
     ax.set(xlabel='Longitude', ylabel='Latitude', zlabel='Elevation',
            title='Solar Panel Placement Visualization')
@@ -309,7 +315,34 @@ def visualize_quads_and_panels(quads, panels_data, surroundings=None):
     cbar.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("%.1f"))
     set_axes_equal(ax)
 
-    ax.view_init(elev=45, azim=-90)                       
+    ax.view_init(elev=elev, azim=azim)
 
     plt.show()
     plt.close()
+
+
+def visualize_ray_trace(origin, solar_dir, occlusion_triangles, intersection=None):
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Plot occlusion triangles
+    for tri in occlusion_triangles:
+        poly = Poly3DCollection([tri], alpha=0.3, facecolor="gray", edgecolor="k")
+        ax.add_collection3d(poly)
+
+    # Plot ray origin
+    ax.scatter(*origin, color="red", s=20, label="Origin")
+
+    # Plot solar ray (extend it for visualization)
+    start = origin + solar_dir * 0.25  # make the arrow long enough
+    ax.quiver(*start, *solar_dir, length=10, color="orange", label="Solar Ray")
+
+    # Plot intersection if any
+    if intersection is not None:
+        ax.scatter(*intersection, color="blue", s=80, label="Intersection")
+
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.legend()
+    plt.show()
