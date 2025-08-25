@@ -96,7 +96,6 @@ vector<double> read_data_from_file(istream &datafile, int limit)
         cerr << errno << ": read data file failed." << endl;
         return data;
     }
-
     // read data file into vector
     string line;
     double value;
@@ -154,8 +153,6 @@ int extractLoadNumber(const std::string &filename)
 
 int process_input(int argc, char **argv, bool process_metric_input)
 {
-    cout << "processing input" << endl;
-
     int i = 0;
 
     string inv_PV_string = argv[++i];
@@ -337,15 +334,8 @@ int process_input(int argc, char **argv, bool process_metric_input)
 
     string path_to_ev_data_string = argv[++i];
     path_to_ev_data = path_to_ev_data_string;
-    // cout << "path_to_ev_data_string = " << path_to_ev_data_string << endl;
     wfh_type = extract_wfh_type(path_to_ev_data);
-    // cout << "wfh_type = " << wfh_type << endl;
 
-    chunk_size = days_in_chunk * 24 / T_u;
-    number_of_chunks = 100;
-
-    chunk_step = (load.size() / T_yr) * solar.size() / number_of_chunks;
-    cout << chunk_step << endl;
 #ifdef DEBUG
     cout << " path_to_ev_data = " << path_to_ev_data << endl;
 #endif
@@ -383,6 +373,10 @@ void load_solar_data(const string &output_dir)
     // Read solar data files
     for (const string &filename : filenames)
     {
+        if (filename == "comprehensive_results.txt")
+        {
+            continue;
+        }
         string filepath = solardir + "/" + filename;
         ifstream filestream(filepath);
         if (!filestream)
@@ -407,4 +401,10 @@ void load_solar_data(const string &output_dir)
 
     pv_min = 0;
     pv_step = (pv_max - pv_min) / num_pv_steps;
+
+    chunk_size = days_in_chunk * 24 / T_u;
+    number_of_chunks = 100;
+
+    chunk_step = (load.size() / T_yr) * solar_dataset[0].size() / number_of_chunks;
+    cout << chunk_step << endl;
 }

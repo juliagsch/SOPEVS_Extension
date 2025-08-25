@@ -58,7 +58,7 @@ def get_pv_production(config, tilt, azimuth, year=2022):
     else:
         raddatabase='PVGIS-SARAH3'
         
-    poa, _ = get_pvgis_hourly(
+    production, _ = get_pvgis_hourly(
         latitude=lat,
         longitude=lon,
         components=False,
@@ -73,12 +73,13 @@ def get_pv_production(config, tilt, azimuth, year=2022):
         usehorizon=True,
         pvcalculation=True,
         map_variables=True,
-        peakpower=1
+        peakpower=1,
+        loss=12 # (12.33) rounded losses due to soiling (2), mismatch (2), wiring (2), connections (0.5), light-induced degradation (1.5), nameplate rating (1), inverter (4). Default PVWatts values.
     )
-    poa = poa['poa_global']
-    pv_production = poa[8760-ts_offset : (8760*2)-ts_offset].values # Shift to local timezone by taking values from following or previous year
+    production = production['P']
+    pv_production = production[8760-ts_offset : (8760*2)-ts_offset].values # Shift to local timezone by taking values from following or previous year
     pv_production = pv_production
-    np.savetxt(f'{round(tilt)}_{round(azimuth)}.txt', pv_production/1000)
+    # np.savetxt(f'{round(tilt)}_{round(azimuth)}.txt', pv_production/1000)
 
     return pv_production
 
@@ -146,7 +147,6 @@ def simulate_roof_segment(scene, roof_segment, config):
 
     # Get the production without shading
     pv_production = get_pv_production(config, roof_segment.tilt, roof_segment.azimuth, year=start.year)
-
     site = Location(lat, lon, tz=timezone_str, altitude=config['altitude'])
     solar_pos = site.get_solarposition(times)
 
@@ -276,19 +276,19 @@ def main():
     if len(sys.argv) != 2:
         # print("Usage: python solar_optimizer.py <output_dir>")
         # sys.exit(1)
-        output_dir = "./out_noshading" 
+        output_dir = "./out" 
     else:
         output_dir = sys.argv[1] 
 
     filename = "2615150_1233155_2615160_1233165"
-    filename = "2613504_1233184_2613514_1233192"
-    filename = "2613096_1233451_2613111_1233466"
-    filename = "2613235_1235070_2613243_1235083"
-    filename = "2613096_1233451_2613111_1233466"
-    # lat, lon = 47.21, 7.54
+    # filename = "2613504_1233184_2613514_1233192"
+    # filename = "2613096_1233451_2613111_1233466"
+    # filename = "2613235_1235070_2613243_1235083"
+    # filename = "2613096_1233451_2613111_1233466"
+    lat, lon = 47.21, 7.54
     altitude = 500
     # lat, lon = 50.2088, -90.5323 #ontario
-    lat, lon = -33.2088, 150.5323 #sydney
+    # lat, lon = -33.2088, 150.5323 #sydney
     # lat, lon = 0, 10.54
 
     eue_target = 0.2
@@ -313,11 +313,11 @@ def main():
         'timezone': timezone_str, 
         'gmt_offset': offset_hours,
         'grid_size': 1.0, # in m^2 for each mesh cell
-        'target_faces': 250,
+        'target_faces': 100,
 
         'simulation_params': {
-            'start': datetime.datetime(2022, 1, 1, 0, 0),
-            'end': datetime.datetime(2022, 12, 31, 23, 0), # Simulate 365 days of the year
+            'start': datetime.datetime(2021, 1, 1, 0, 0),
+            'end': datetime.datetime(2021, 12, 31, 23, 0), # Simulate 365 days of the year
         }
     }
 
@@ -336,19 +336,20 @@ def main():
     save_comprehensive_results(comprehensive_results, output_dir)
 
     # Get optimal sizing
-    num_panels = 2
-
-    command = f"sizing_simulation/sim 1250 460 1 1 30 1 {eue_target} 0.9 365 load.txt {output_dir} 0.8 0.2 60 7.4 {op} {ev_path} 20"
+    command = f"sizing_simulation/sim 1250 460 1 1 30 1 {eue_target} 0.8 365 load.txt {output_dir} 0.8 0.2 60 7.4 {op} {ev_path} 20"
     result = subprocess.run(command.split(), stdout=subprocess.PIPE, text=True)
     result = result.stdout.split("\t")
-    battery, solar = result[0], result[1]
-    print(battery, solar)
-    num_panels = np.ceil(float(solar)/0.2)
+    battery, solar, num_panels = result[0], result[1], result[2]
+
+    print(battery, " kWh,", solar, " kW, Number of Panels: ", num_panels)
+    if 'inf' in battery or float(battery) == -1.0:
+        print("Simulator returned inf - no valid solution found for given SSR.")
+        return True
     
     comprehensive_results = solar_optimizer.read_results(output_dir)
     panel_placement = solar_optimizer.optimize_panel_placement(
         comprehensive_results,
-        num_panels=num_panels,
+        num_panels=float(num_panels),
         quad_size=1,
         panel_length=1,
         panel_width=1

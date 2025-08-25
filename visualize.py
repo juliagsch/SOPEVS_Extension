@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-elev, azim = 25, 160
+elev, azim = 25, -90
 
 def set_axes_equal(ax):
     '''Make axes of 3D plot have equal scale.'''

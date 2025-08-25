@@ -29,7 +29,12 @@ SimulationResult run_simulations(std::vector<EVRecord> evRecords, std::vector<st
          chunk_num < number_of_chunks; chunk_num += 1, chunk_start += chunk_step)
     {
         int Ev_start = rand() % evRecords.size();
-        results.push_back(simulate(load, solar_dataset, chunk_start, chunk_start + chunk_size, 0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start));
+        vector<SimulationResult> curve = simulate(load, solar_dataset, chunk_start, chunk_start + chunk_size, 0, evRecords, allDailyStatuses, max_soc, min_soc, Ev_start);
+        if (curve.size() == 0)
+        {
+            return SimulationResult(-1, -1, -1);
+        }
+        results.push_back(curve);
     }
 
 #ifdef DEBUG
@@ -84,7 +89,7 @@ int main(int argc, char **argv)
     // cout << loss << endl;
 
     SimulationResult sr = run_simulations(evRecords, allDailyStatuses);
-    cout << sr.B << "\t" << sr.C << "\t" << sr.cost << endl;
+    cout << sr.B << "\t" << sr.C << "\t" << ceil(sr.C / panelkW) << "\t" << sr.cost << endl;
     // int t_chunk_size = days_in_chunk * (24 / T_u);
     // double battery_cells = sr.B / kWh_in_one_cell;
     // sim(load, solar, 0, t_chunk_size, battery_cells, sr.C, 0, evRecords, allDailyStatuses, max_soc, min_soc, 0, true);
