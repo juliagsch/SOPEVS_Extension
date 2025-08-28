@@ -35,7 +35,7 @@ def solar_vector(azimuth, zenith):
 
 def is_shaded(origin, solar_dir, occlusion_triangles):
     """Check shading using multiple rays across the triangle"""
-    ray_origin = origin + solar_dir * 0.25  # Offset by 25 cm to avoid self-intersection
+    ray_origin = origin + solar_dir * 0.1  # Offset by 10 cm to avoid self-intersection
     # Check against centeroid
     for tri in occlusion_triangles:
         if ray_triangle_intersection(ray_origin, solar_dir, tri):
@@ -153,7 +153,6 @@ def simulate_roof_segment(scene, roof_segment, config):
     production_per_panel = [pv_production.copy() for _ in range(len(roof_segment.panels))]
     # Shading simulation for every panel position on roof segment
     for t_idx, (ts, pos) in enumerate(solar_pos.iterrows()):
-        print(t_idx)
         # Iteration can be skipped if there is no production in that hour
         if pv_production[t_idx] == 0:
             continue
@@ -170,20 +169,26 @@ def simulate_roof_segment(scene, roof_segment, config):
         for panel_idx, panel in enumerate(roof_segment.panels):
             panel_shaded = False
             for square_edge in panel:
-                # Check if square edge has already been processed
+                # Check if square is shaded based on previous computation
                 xyz = tuple(square_edge)
                 if xyz in processed_pts and xyz in shaded_mesh_pts:
                     panel_shaded = True
                     break
-                if xyz in processed_pts:
-                    continue
-
-                # Carry out raytracing
-                if is_shaded(square_edge, solar_dir, scene.surroundings_triangles):
-                    panel_shaded = True
-                    shaded_mesh_pts.add(xyz)
-                processed_pts.add(xyz)
             
+    
+            for square_edge in panel:
+                if not panel_shaded:
+                    # Check if square edge has already been processed
+                    xyz = tuple(square_edge)
+                    if xyz in processed_pts:
+                        continue
+
+                    # Carry out raytracing
+                    if is_shaded(square_edge, solar_dir, scene.surroundings_triangles):
+                        panel_shaded = True
+                        shaded_mesh_pts.add(xyz)
+                    processed_pts.add(xyz)
+                
             if panel_shaded:
                 production_per_panel[panel_idx][t_idx] = 0
             else:
@@ -272,15 +277,16 @@ def get_timezone(lat, lon, year=2022):
     return timezone_str, gmt_offset
 
 
-def main():
-    if len(sys.argv) != 2:
-        # print("Usage: python solar_optimizer.py <output_dir>")
-        # sys.exit(1)
-        output_dir = "./out" 
-    else:
-        output_dir = sys.argv[1] 
+def simulate(output_dir, filename):
+    # if len(sys.argv) != 2:
+    #     # print("Usage: python solar_optimizer.py <output_dir>")
+    #     # sys.exit(1)
+    #     output_dir = "./out" 
+    # else:
+    #     output_dir = sys.argv[1] 
+    output_dir = output_dir + filename
 
-    filename = "2615150_1233155_2615160_1233165"
+    # filename = "2615150_1233155_2615160_1233165"
     # filename = "2613504_1233184_2613514_1233192"
     # filename = "2613096_1233451_2613111_1233466"
     # filename = "2613235_1235070_2613243_1235083"
@@ -291,7 +297,7 @@ def main():
     # lat, lon = -33.2088, 150.5323 #sydney
     # lat, lon = 0, 10.54
 
-    eue_target = 0.2
+    eue_target = 0.1
     ev_path = 'ev_merged.csv'
     op = 'safe_departure'
 
@@ -313,7 +319,7 @@ def main():
         'timezone': timezone_str, 
         'gmt_offset': offset_hours,
         'grid_size': 1.0, # in m^2 for each mesh cell
-        'target_faces': 100,
+        'target_faces': 1000,
 
         'simulation_params': {
             'start': datetime.datetime(2021, 1, 1, 0, 0),
@@ -339,9 +345,14 @@ def main():
     command = f"sizing_simulation/sim 1250 460 1 1 30 1 {eue_target} 0.8 365 load.txt {output_dir} 0.8 0.2 60 7.4 {op} {ev_path} 20"
     result = subprocess.run(command.split(), stdout=subprocess.PIPE, text=True)
     result = result.stdout.split("\t")
+    if len(result) != 3:
+        print("Error in simulator execution")
+        print("Returned:", result)
+        return False
+    print(result)
     battery, solar, num_panels = result[0], result[1], result[2]
 
-    print(battery, " kWh,", solar, " kW, Number of Panels: ", num_panels)
+    print(battery, "kWh,", solar, "kW, Number of Panels:", num_panels)
     if 'inf' in battery or float(battery) == -1.0:
         print("Simulator returned inf - no valid solution found for given SSR.")
         return True
@@ -361,4 +372,6 @@ def main():
     return True
 
 if __name__ == '__main__':
-    main()
+    files = ['1','2615202_1235060_2615220_1235078', '2615491_1233635_2615506_1233652', '2612594_1233004_2612617_1233033','2613646_1233871_2613658_1233882', '2613029_1233440_2613051_1233460','2612706_1233037_2612722_1233052','2615324_1233237_2615341_1233258','2613430_1235637_2613444_1235646','2613120_1233878_2613145_1233895','2613369_1233032_2613384_1233048','2613341_1233404_2613359_1233420','2612548_1233071_2612564_1233084','2613484_1233179_2613498_1233194', '2615370_1234633_2615388_1234647', '2612872_1233025_2612888_1233045']
+    for file in files:
+        simulate('./out/', file)

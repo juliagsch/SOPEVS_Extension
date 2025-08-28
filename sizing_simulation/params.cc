@@ -396,8 +396,8 @@ void load_solar_data(const string &output_dir)
     }
 
     pv_max = solar_dataset.size() * panelkW;
-    cout << "panel kW: " << panelkW << endl;
-    cout << "Calculated pv_max: " << pv_max << endl;
+    // cout << "panel kW: " << panelkW << endl;
+    // cout << "Calculated pv_max: " << pv_max << endl;
 
     pv_min = 0;
     pv_step = (pv_max - pv_min) / num_pv_steps;
@@ -406,5 +406,5 @@ void load_solar_data(const string &output_dir)
     number_of_chunks = 100;
 
     chunk_step = (load.size() / T_yr) * solar_dataset[0].size() / number_of_chunks;
-    cout << chunk_step << endl;
+    // cout << chunk_step << endl;
 }

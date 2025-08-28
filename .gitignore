@@ -6,18 +6,10 @@ __pycache__
 .python-version
 
 build
-out
-out_testcase
-out_noshading
+out*
 roofs
-panels*
-solar*
-solothurn*
 surroundings
 load.txt
-sim*
 samples
-
-
 
 ev_merged.csv

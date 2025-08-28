@@ -6,7 +6,7 @@ def triangulate_polygon(polygon):
     if n < 3:
         return []
     if n == 3:
-        return polygon
+        return [polygon]
 
     triangles = []
     for i in range(1, n-1):
