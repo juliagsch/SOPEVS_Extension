@@ -1,25 +1,16 @@
-import datetime
-import sys
 import json
 import os
-import pytz
-import solar_optimizer
-
 import pandas as pd
 import numpy as np
+import visualize
+
 from pvlib.location import Location
 from pvlib.iotools import get_pvgis_hourly
 from read_mesh import read_building, read_surroundings
-from coplanarity_mesh import Scene
-import shutil
-from timezonefinder import TimezoneFinder
-from global_land_mask import globe
-import visualize
-import subprocess
+from scene_processing import Scene
 from raytracing import ray_triangle_intersection
 
-enable_visualize = True
-
+enable_visualize = False
 
 def solar_vector(azimuth, zenith):
     """Convert solar angles to 3D direction vector"""
@@ -38,13 +29,14 @@ def is_shaded(origin, solar_dir, occlusion_triangles):
     ray_origin = origin + solar_dir * 0.1  # Offset by 10 cm to avoid self-intersection
     # Check against centeroid
     for tri in occlusion_triangles:
-        if ray_triangle_intersection(ray_origin, solar_dir, tri):
+        intersects, _= ray_triangle_intersection(ray_origin, solar_dir, tri)
+        if intersects:
             return True  # Shaded if any ray hits
 
     return False  # Not shaded if all rays clear
 
 
-def get_pv_production(config, tilt, azimuth, year=2022):
+def get_pv_production(config, tilt, azimuth, year):
     ts_offset = int(config['gmt_offset'])
     timezone_str=config['timezone']
     lat, lon = config['geo_centroid']
@@ -78,60 +70,8 @@ def get_pv_production(config, tilt, azimuth, year=2022):
     )
     production = production['P']
     pv_production = production[8760-ts_offset : (8760*2)-ts_offset].values # Shift to local timezone by taking values from following or previous year
-    pv_production = pv_production
-    # np.savetxt(f'{round(tilt)}_{round(azimuth)}.txt', pv_production/1000)
 
     return pv_production
-
-
-def create_comprehensive_results(scene, simulation_results):
-    comprehensive_results = {}
-
-    for roof_segment_idx, per_panel_production in simulation_results.items():
-        # find the roof_segment object with matching idx
-        roof_segment = next((rs for rs in scene.roof_segments if rs.idx == roof_segment_idx), None)
-        if roof_segment is None:
-            print(f"Warning: Roof segment {roof_segment_idx} not found.")
-            continue
-
-        for panel_idx, panel_production in enumerate(per_panel_production):
-            mesh_id = f"Segment{roof_segment_idx}_Panel{panel_idx}"
-            try:
-                panel_coords = np.array(roof_segment.panels[panel_idx])
-                comprehensive_results[mesh_id] = {
-                    'average_radiance': round(float(np.mean(panel_production)), 1),
-                    'original_coordinates': panel_coords.tolist(),
-                    'centroid': np.mean(panel_coords, axis=0).tolist(),
-                }
-            except (ValueError, IndexError) as e:
-                print(f"Skipping invalid mesh ID {mesh_id}: {str(e)}")
-
-    return comprehensive_results
-
-
-def initialize_scene(config):
-    """Initialize scene consisting of the building and its surroundings."""
-
-    building_V, building_F, offset = read_building(config['building_filename'])
-    surroundings_V, surroundings_F = read_surroundings(config['surroundings_filename'], offset)        
-
-    scene = Scene(
-        building_V=building_V,
-        building_F=building_F,
-        surroundings_V=surroundings_V,
-        surroundings_F=surroundings_F,
-        grid_size=config['grid_size'],
-        target_faces=config['target_faces']
-    )
-
-    if enable_visualize:
-        visualize.plot_building(scene.building_V, scene.building_F)
-        visualize.plot_rooftops(scene.building_V, scene.roof_faces)
-        visualize.plot_building_with_mesh_grid(scene.building_V, scene.building_F, scene.panels)
-        visualize.plot_building_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels)
-        visualize.plot_rooftops_with_mesh_points(scene.building_V, scene.roof_faces, scene.panels)
-        visualize.plot_rooftops_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels, scene.surroundings_V, scene.surroundings_F)
-    return scene
 
 
 def simulate_roof_segment(scene, roof_segment, config):
@@ -151,6 +91,7 @@ def simulate_roof_segment(scene, roof_segment, config):
     solar_pos = site.get_solarposition(times)
 
     production_per_panel = [pv_production.copy() for _ in range(len(roof_segment.panels))]
+
     # Shading simulation for every panel position on roof segment
     for t_idx, (ts, pos) in enumerate(solar_pos.iterrows()):
         # Iteration can be skipped if there is no production in that hour
@@ -238,6 +179,35 @@ def convert_to_serializable(obj):
     return obj
 
 
+
+
+def create_comprehensive_results(scene, simulation_results):
+    comprehensive_results = {}
+
+    for roof_segment_idx, per_panel_production in simulation_results.items():
+        # find the roof_segment object with matching idx
+        roof_segment = next((rs for rs in scene.roof_segments if rs.idx == roof_segment_idx), None)
+        if roof_segment is None:
+            print(f"Warning: Roof segment {roof_segment_idx} not found.")
+            continue
+
+        for panel_idx, panel_production in enumerate(per_panel_production):
+            mesh_id = f"Segment{roof_segment_idx}_Panel{panel_idx}"
+            try:
+                panel_coords = np.array(roof_segment.panels[panel_idx])
+                if np.sum(panel_production) >= 10:  # Skip panels with negligible production
+                    comprehensive_results[mesh_id] = {
+                        'average_radiance': round(float(np.mean(panel_production)), 1),
+                        'yearly_production': round(float(np.sum(panel_production)), 1),
+                        'original_coordinates': panel_coords.tolist(),
+                        'centroid': np.mean(panel_coords, axis=0).tolist(),
+                    }
+            except (ValueError, IndexError) as e:
+                print(f"Skipping invalid mesh ID {mesh_id}: {str(e)}")
+
+    return comprehensive_results
+
+
 def save_comprehensive_results(comprehensive_results, output_dir):
     """Save comprehensive results to text file with proper serialization"""
     filename = os.path.join(output_dir, "comprehensive_results.txt")
@@ -258,120 +228,29 @@ def save_comprehensive_results(comprehensive_results, output_dir):
         print(f"Unexpected error: {str(e)}")
 
 
-def get_timezone(lat, lon, year=2022):
-    """Get timezone name and offset from GMT from coordinates"""
-    tf = TimezoneFinder()
-    timezone_str = tf.timezone_at(lng=lon, lat=lat)
-    tz = pytz.timezone(timezone_str)
+def initialize_scene(config):
+    """Initialize scene consisting of the building and its surroundings."""
 
-    # Choose a date in DST (January 1 for north, July 1 for south)
-    dt = datetime.datetime(year, 1, 1) if lat > 0 else datetime.datetime(year, 7, 1)
+    building_V, building_F, offset = read_building(config['building_filename'])
+    surroundings_V, surroundings_F = read_surroundings(config['surroundings_filename'], offset)        
 
-    # If this date is in DST, shift to the other half of the year
-    if tz.dst(dt) != datetime.timedelta(0):
-        dt = datetime.datetime(year, 7, 1) if lat > 0 else datetime.datetime(year, 1, 1)
-
-
-    gmt_offset = tz.utcoffset(dt).total_seconds() / 3600
-    gmt_offset = np.ceil(gmt_offset) # We round up half hour time zones as we consider hourly time steps
-    return timezone_str, gmt_offset
-
-
-def simulate(output_dir, filename):
-    # if len(sys.argv) != 2:
-    #     # print("Usage: python solar_optimizer.py <output_dir>")
-    #     # sys.exit(1)
-    #     output_dir = "./out" 
-    # else:
-    #     output_dir = sys.argv[1] 
-    output_dir = output_dir + filename
-
-    # filename = "2615150_1233155_2615160_1233165"
-    # filename = "2613504_1233184_2613514_1233192"
-    # filename = "2613096_1233451_2613111_1233466"
-    # filename = "2613235_1235070_2613243_1235083"
-    # filename = "2613096_1233451_2613111_1233466"
-    lat, lon = 47.21, 7.54
-    altitude = 500
-    # lat, lon = 50.2088, -90.5323 #ontario
-    # lat, lon = -33.2088, 150.5323 #sydney
-    # lat, lon = 0, 10.54
-
-    eue_target = 0.1
-    ev_path = 'ev_merged.csv'
-    op = 'safe_departure'
-
-    
-    if not globe.is_land(lat=lat, lon=lon):
-        print("Please choose coordinates on land.")
-        sys.exit()
-
-    timezone_str, offset_hours = get_timezone(lat, lon)
-
-    CONVERSION_PARAMS = {
-        'building_filename': f"./samples/{filename}/building.obj",
-        'surroundings_filename': f"./samples/{filename}/surroundings3D.obj",
-        'earth_radius': 6378137.0,
-        'geo_centroid': (lat, lon),
-        'altitude': altitude,
-
-        'unit_scaling': (1.0, 1.0, 1.0),
-        'timezone': timezone_str, 
-        'gmt_offset': offset_hours,
-        'grid_size': 1.0, # in m^2 for each mesh cell
-        'target_faces': 1000,
-
-        'simulation_params': {
-            'start': datetime.datetime(2021, 1, 1, 0, 0),
-            'end': datetime.datetime(2021, 12, 31, 23, 0), # Simulate 365 days of the year
-        }
-    }
-
-    print(CONVERSION_PARAMS)
-
-    # Run a complete simulation
-    scene = initialize_scene(CONVERSION_PARAMS)
-    simulation_results = run_simulation(scene, CONVERSION_PARAMS)
-    
-    # Save results
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-    save_hourly_data_to_txt(simulation_results, output_dir)
-    comprehensive_results = create_comprehensive_results(scene, simulation_results)
-    save_comprehensive_results(comprehensive_results, output_dir)
-
-    # Get optimal sizing
-    command = f"sizing_simulation/sim 1250 460 1 1 30 1 {eue_target} 0.8 365 load.txt {output_dir} 0.8 0.2 60 7.4 {op} {ev_path} 20"
-    result = subprocess.run(command.split(), stdout=subprocess.PIPE, text=True)
-    result = result.stdout.split("\t")
-    if len(result) != 3:
-        print("Error in simulator execution")
-        print("Returned:", result)
-        return False
-    print(result)
-    battery, solar, num_panels = result[0], result[1], result[2]
-
-    print(battery, "kWh,", solar, "kW, Number of Panels:", num_panels)
-    if 'inf' in battery or float(battery) == -1.0:
-        print("Simulator returned inf - no valid solution found for given SSR.")
-        return True
-    
-    comprehensive_results = solar_optimizer.read_results(output_dir)
-    panel_placement = solar_optimizer.optimize_panel_placement(
-        comprehensive_results,
-        num_panels=float(num_panels),
-        quad_size=1,
-        panel_length=1,
-        panel_width=1
+    scene = Scene(
+        building_V=building_V,
+        building_F=building_F,
+        surroundings_V=surroundings_V,
+        surroundings_F=surroundings_F,
+        grid_size=config['grid_size'],
+        target_faces=config['target_faces'],
+        angle_tolerance=config['angle_tolerance'],
+        max_roof_tilt=config['max_roof_tilt'],
     )
-    
-    visualize.visualize_quads_and_panels(comprehensive_results, panel_placement, (scene.surroundings_V, scene.surroundings_F))
 
-
-    return True
-
-if __name__ == '__main__':
-    files = ['1','2615202_1235060_2615220_1235078', '2615491_1233635_2615506_1233652', '2612594_1233004_2612617_1233033','2613646_1233871_2613658_1233882', '2613029_1233440_2613051_1233460','2612706_1233037_2612722_1233052','2615324_1233237_2615341_1233258','2613430_1235637_2613444_1235646','2613120_1233878_2613145_1233895','2613369_1233032_2613384_1233048','2613341_1233404_2613359_1233420','2612548_1233071_2612564_1233084','2613484_1233179_2613498_1233194', '2615370_1234633_2615388_1234647', '2612872_1233025_2612888_1233045']
-    for file in files:
-        simulate('./out/', file)
+    if enable_visualize:
+        visualize.plot_building(scene.building_V, scene.building_F)
+        visualize.plot_building(scene.building_V, scene.united_faces)
+        visualize.plot_rooftops(scene.building_V, scene.roof_faces)
+        visualize.plot_building_with_mesh_grid(scene.building_V, scene.united_faces, scene.panels)
+        visualize.plot_building_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels)
+        visualize.plot_rooftops_with_mesh_points(scene.building_V, scene.roof_faces, scene.panels)
+        visualize.plot_rooftops_with_mesh_grid(scene.building_V, scene.roof_faces, scene.panels, scene.surroundings_V, scene.surroundings_F)
+    return scene

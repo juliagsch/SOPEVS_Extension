@@ -18,7 +18,8 @@ def ray_polygon_intersection(ray_origin, ray_dir, polygon):
     """Triangulates polygon and then calls the Möller-Trumbore Algorithm"""
     triangles = triangulate_polygon(polygon)
     for triangle in triangles:
-        if ray_triangle_intersection(ray_origin, ray_dir, triangle):
+        intersects, _ = ray_triangle_intersection(ray_origin, ray_dir, triangle)
+        if intersects:
             return True
     
     return False
@@ -34,20 +35,20 @@ def ray_triangle_intersection(ray_origin, ray_dir, triangle, epsilon=1e-10):
     a = np.dot(edge1, h)
 
     if abs(a) < epsilon:
-        return False
+        return False, None
 
     f = 1.0 / a
     s = ray_origin - v0
     u = f * np.dot(s, h)
 
     if u < 0.0 or u > 1.0:
-        return False
+        return False, None
 
     q = np.cross(s, edge1)
     v = f * np.dot(ray_dir, q)
 
     if v < 0.0 or u + v > 1.0:
-        return False
+        return False, None
 
     t = f * np.dot(edge2, q)
-    return t >= epsilon
+    return t >= epsilon, t
