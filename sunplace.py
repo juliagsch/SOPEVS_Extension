@@ -25,6 +25,7 @@ max_roof_tilt = 60.0 # Maximum roof tilt in degrees to consider a face as roofto
 panel_size_kW = 0.4  # Each panel produces 400 W
 panel_height=1.8 # in m
 panel_width=1 # in m
+min_segment_size=15 # Minimum number of quads a roof segment must have to be considered for panel placement to avoid scattered panels.
 
 # Location for Solothurn, Switzerland
 lat, lon = 47.21, 7.54
@@ -34,7 +35,7 @@ altitude = 500 # in m
 eue_target = 0.2 # 80% of the load should be covered by solar
 conf = 0.75 # Confidence level for robustness of the sizing simulation
 pv_cost = 1000 # per kW
-battery_cost = 600 # per kWh
+battery_cost = 500 # per kWh
 
 # EV Configuration
 ev_path = './data/EV.csv'
@@ -113,11 +114,13 @@ def simulate(output_dir, filename):
         print("Error in simulator execution")
         return False
     battery, solar = result[0], result[1]
+    solar = round(float(solar),2)
+
     if 'inf' in battery or float(battery) == -1.0:
         print("Simulator returned inf - no valid solution found for given SSR.")
         return True
     
-    num_panels = int(np.ceil(float(solar) / panel_size_kW))  # Assume each panel produces 400 W
+    num_panels = int(np.ceil(solar / panel_size_kW))  # Assume each panel produces 400 W
     print(battery, "kWh,", solar, "kW")
     print("Placing", num_panels, "panels on roof...")
 
@@ -126,12 +129,13 @@ def simulate(output_dir, filename):
     panel_placement = placement.panel_placement(
         comprehensive_results,
         num_panels=num_panels,
-        quad_size=1,
+        quad_size=grid_size,
         panel_height=panel_height,
-        panel_width=panel_width
+        panel_width=panel_width,
+        min_segment_size=min_segment_size
     )
 
-    visualize.visualize_quads_and_panels(comprehensive_results, panel_placement, (scene.building_V, scene.united_faces), kwh_per_panel=panel_size_kW)
+    visualize.visualize_panels(comprehensive_results, panel_placement, (scene.building_V, scene.united_faces), kwh_per_panel=panel_size_kW)
     return True
 
 if __name__ == '__main__': 

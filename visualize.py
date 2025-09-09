@@ -270,8 +270,8 @@ def visualize_quads_and_panels(quads, panel_clusters, surroundings=None, kwh_per
 
     ax.view_init(elev=elev, azim=azim)
 
-    # plt.show()
-    # plt.close()
+    plt.show()
+    plt.close()
 
 def visualize_panels(quads, panel_clusters, surroundings=None, kwh_per_panel=0.4):
     """Combined visualization of quads and solar panels."""

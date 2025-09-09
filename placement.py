@@ -10,7 +10,7 @@ class CandidatePanel:
     quads: list
 
 
-def panel_placement(quads, num_panels, quad_size, panel_height, panel_width, min_segment_size=6):
+def panel_placement(quads, num_panels, quad_size, panel_height, panel_width, min_segment_size):
     """Solar panel placement based on radiance values."""
     segments = {}
     # Filter out small segments
